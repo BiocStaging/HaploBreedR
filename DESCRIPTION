@@ -18,8 +18,8 @@ Description: Identifies superior haplotypes at candidate genes from
     and LD structure. Methods follow the haplotype-based breeding
     framework described in the accompanying manuscript.
 License: MIT + file LICENSE
-URL: https://github.com/<aksruchi>/HaploBreedR
-BugReports: https://github.com/<aksruchi>/HaploBreedR/issues
+URL: https://github.com/aksruchi/HaploBreedR
+BugReports: https://github.com/aksruchi/HaploBreedR/issues
 Encoding: UTF-8
 Depends:
     R (>= 4.4.0)
