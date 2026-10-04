@@ -1,0 +1,16 @@
+^.*\.Rproj$
+^\.Rproj\.user$
+^\.github$
+^\.gitignore$
+^LICENSE\.md$
+^README\.Rmd$
+^data-raw$
+^inst/scripts$
+^scratch$
+^tmp$
+^tests/testthat/_snaps$
+^\.Rhistory$
+^\.RData$
+^\.Ruserdata$
+^doc$
+^Meta$

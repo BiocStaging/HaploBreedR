@@ -1,0 +1,29 @@
+# R build artifacts
+*.tar.gz
+*.Rcheck/
+..Rcheck/
+*.BiocCheck/
+
+# RStudio
+.Rproj.user/
+*.Rproj
+
+# R session state
+.Rhistory
+.RData
+.Ruserdata
+
+# R build internals
+/doc/
+/Meta/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+*.swp
+
+# BiocCheck temp
+HaploBreedR.BiocCheck/

@@ -1,0 +1,3 @@
+"gene_id","chromosome","gene_start","gene_end","haplotype","n","mean","se","ci_lower","ci_upper","nt_sequence","aa_sequence","snp_1_id","snp_2_id","snp_3_id","snp_1_pos","snp_2_pos","snp_3_pos","snp_1_allele","snp_2_allele","snp_3_allele","superior_haplotype","is_superior","p_value","permutation_p","cohens_d","improvement_pct"
+"gene1","1",1000,2500,"Hap1",6,110.5,4.2,102.1,118.9,"A-C-G","Met-Ala-Val","snp005","snp020","snp045",1800,4800,9800,"A","C","G","Hap1",TRUE,1e-08,0.001,1.5,12.3
+"gene1","1",1000,2500,"Hap2",4,92.3,5.1,82.1,102.5,"A-T-G","Met-Ser-Val","snp005","snp020","snp045",1800,4800,9800,"A","T","G","Hap1",TRUE,1e-08,0.001,1.5,12.3

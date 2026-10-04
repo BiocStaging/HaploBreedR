@@ -1,0 +1,21 @@
+---
+title: "HaploBreedR: haplotype-based breeding decisions"
+author: "Akansha Singh"
+date: "`r Sys.Date()`"
+output:
+  BiocStyle::html_document:
+    toc: true
+    toc_float: true
+vignette: >
+  %\VignetteIndexEntry{HaploBreedR: haplotype-based breeding decisions}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment  = "#>",
+  eval     = FALSE     # examples require PLINK and a reference genome
+)
+library(HaploBreedR)

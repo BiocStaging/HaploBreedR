@@ -1,0 +1,4 @@
+"SNP","POS","REF","ALT","Chr","Strand","Region","AA_Change","Codon_Num"
+"snp005",1800,"A","T","1","+","CDS_nonsynonymous","A76S",76
+"snp020",4800,"C","T","1","+","5UTR",NA,NA
+"snp045",9800,"G","A","1","+","3UTR",NA,NA

@@ -1,0 +1,64 @@
+Package: HaploBreedR
+Type: Package
+Title: Haplotype-Based Breeding Decisions from GWAS and Genotype Data
+Version: 0.99.0
+Authors@R:
+    person("Akansha", "Singh",
+           email = "akansha.iasbhu@gmail.com",
+           role = c("aut", "cre"),
+           comment = c(ORCID = "0000-0002-4916-7296"))
+Description: Identifies superior haplotypes at candidate genes from
+    genome-wide association study (GWAS) hits and genotype data, tests
+    haplotype-trait associations, applies effect-size and permutation
+    gates, and produces multi-trait breeding recommendations. The
+    package includes tools for reference genome preparation, functional
+    variant discovery, LD region construction, association testing,
+    superior-haplotype identification, multi-trait selection indexing,
+    and publication-quality visualization of haplotypes, gene models,
+    and LD structure. Methods follow the haplotype-based breeding
+    framework described in the accompanying manuscript.
+License: MIT + file LICENSE
+URL: https://github.com/<aksruchi>/HaploBreedR
+BugReports: https://github.com/<aksruchi>/HaploBreedR/issues
+Encoding: UTF-8
+Depends:
+    R (>= 4.4.0)
+Imports:
+    data.table (>= 1.14.0),
+    ggplot2 (>= 3.4.0),
+    stats,
+    utils,
+    grDevices,
+    grid,
+    gridExtra,
+    gtable,
+    Biostrings (>= 2.66.0),
+    GenomicRanges (>= 1.50.0),
+    IRanges (>= 2.32.0),
+    rtracklayer (>= 1.58.0),
+    boot (>= 1.3.28)
+Suggests:
+    ape (>= 5.6),
+    pegas (>= 1.1),
+    agricolae (>= 1.3.5),
+    emmeans (>= 1.8),
+    multcompView (>= 0.1.8),
+    patchwork (>= 1.1),
+    ggrepel (>= 0.9),
+    ggbeeswarm (>= 0.7),
+    openxlsx (>= 4.2),
+    readxl (>= 1.4),
+    AnnotationDbi (>= 1.60.0),
+    org.Osativa.eg.db (>= 3.16.0),
+    BiocFileCache (>= 2.6.0),
+    BiocStyle (>= 2.26.0),
+    knitr (>= 1.40),
+    rmarkdown (>= 2.20),
+    testthat (>= 3.1.0),
+    withr (>= 2.5.0)
+VignetteBuilder: knitr
+biocViews: Software, Genetics, GenomeWideAssociation, SNP, GenomeAssembly, Network, PrincipalComponent, NetworkEnrichment, GO
+SystemRequirements: PLINK (>= 1.9)
+LazyData: false
+Config/testthat/edition: 3
+Config/roxygen2/version: 8.1.0
