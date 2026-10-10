@@ -9,9 +9,12 @@ template:
 
 navbar:
   structure:
-    left:  [intro, reference, articles, news]
+    left:  [intro, infographic, reference, articles, news]
     right: [search, github]
   components:
+    infographic:
+      text: "Infographic"
+      href: infographic.html
     github:
       icon: fa-github
       href: https://github.com/aksruchi/HaploBreedR

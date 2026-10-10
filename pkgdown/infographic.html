@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>HaploBreedR infographic</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    background: #f4f7f5; color: #1a1a1a; padding: 24px;
+  }
+  .page {
+    width: 1400px; margin: 0 auto; background: #ffffff;
+    border-radius: 16px; box-shadow: 0 4px 30px rgba(0,60,30,0.08);
+    overflow: hidden;
+  }
+  .header {
+    background: linear-gradient(90deg, #0d3b2e 0%, #145a43 100%);
+    color: #fff; padding: 26px 40px;
+    display: flex; align-items: center; gap: 30px;
+  }
+  .header .logo { font-size: 42px; line-height: 1; }
+  .header .title-block { flex: 1; }
+  .header h1 { font-size: 38px; font-weight: 800; letter-spacing: -0.5px; }
+  .header h1 small { font-weight: 300; }
+  .header .tagline { font-size: 15px; opacity: .92; margin-top: 4px; }
+  .header .meta { text-align: right; font-size: 12px; line-height: 1.7; }
+  .header .version {
+    background: #fff; color: #0d3b2e; padding: 5px 14px;
+    border-radius: 20px; font-weight: 700; font-size: 14px;
+    display: inline-block; margin-bottom: 6px;
+  }
+  .header .repo { font-family: ui-monospace, Consolas, monospace; }
+  .header .repo a { color: #b8d4c4; }
+
+  .grid {
+    display: grid; grid-template-columns: repeat(3, 1fr);
+    gap: 18px; padding: 22px;
+  }
+  .card {
+    border: 1px solid #e2e8e4; border-radius: 12px;
+    padding: 16px 18px 18px; background: #fbfdfb;
+    display: flex; flex-direction: column; min-height: 340px;
+  }
+  .card h2 {
+    display: flex; align-items: center; gap: 10px;
+    font-size: 15px; font-weight: 700; margin-bottom: 10px;
+  }
+  .num {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 24px; height: 24px; border-radius: 50%;
+    color: #fff; font-size: 13px; font-weight: 700;
+  }
+  .c1 .num { background: #145a43; }
+  .c2 .num { background: #1f4e8c; }
+  .c3 .num { background: #6b3fa0; }
+  .c4 .num { background: #1a8c6a; }
+  .c5 .num { background: #c22e2e; }
+  .c6 .num { background: #1f4e8c; }
+  .c7 .num { background: #6b3fa0; }
+  .c8 .num { background: #2d7a5c; }
+  .c9 .num { background: #b58106; }
+
+  .card p, .card li { font-size: 12.5px; line-height: 1.55; }
+  .card ul { padding-left: 16px; margin: 6px 0; }
+  .card ul li { margin-bottom: 3px; }
+  .card a { color: #145a43; text-decoration: none;
+            border-bottom: 1px dotted #145a43; }
+
+  pre {
+    background: #f2f6f4; border: 1px solid #dbe5df;
+    border-radius: 6px; padding: 8px 10px;
+    font-family: ui-monospace, Consolas, "Courier New", monospace;
+    font-size: 11px; line-height: 1.5;
+    overflow-x: auto; white-space: pre; color: #1a3a2e;
+  }
+  .comment { color: #5a7a6a; }
+  .keyword { color: #1f4e8c; }
+  .string  { color: #a3461b; }
+  .fn      { color: #0d3b2e; font-weight: 700; }
+
+  .label {
+    font-size: 11px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .5px;
+    color: #4a6a5a; margin: 8px 0 4px;
+  }
+  .row { display: flex; gap: 10px; align-items: flex-start; }
+  .grow { flex: 1; }
+
+  .flow { display: flex; align-items: center; gap: 4px; margin: 8px 0 12px; }
+  .flow .step {
+    flex: 1; text-align: center; padding: 8px 4px;
+    border-radius: 6px; font-size: 10.5px; font-weight: 700; color: #fff;
+  }
+  .flow .s1 { background: #2d7a5c; }
+  .flow .s2 { background: #1f4e8c; }
+  .flow .s3 { background: #6b3fa0; }
+  .flow .s4 { background: #c7802a; }
+  .flow .arrow { color: #889; font-weight: 700; }
+
+  .steps { counter-reset: step; }
+  .steps li { list-style: none; display: flex; gap: 8px; margin: 5px 0; }
+  .steps li::before {
+    content: counter(step); counter-increment: step;
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 18px; height: 18px; border-radius: 50%;
+    background: #145a43; color: #fff;
+    font-size: 10px; font-weight: 700;
+  }
+
+  .feat { display: flex; gap: 8px; margin-bottom: 7px; font-size: 12px; }
+  .feat .icon { font-size: 18px; line-height: 1.2; min-width: 22px; }
+  .feat b { display: block; font-size: 12px; }
+  .feat span { font-size: 11px; color: #4a5a52; }
+
+  .footer {
+    background: linear-gradient(90deg, #0d3b2e 0%, #145a43 100%);
+    color: #e6f0ea; padding: 16px 40px;
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 13px;
+  }
+  .footer .chain { display: flex; gap: 10px; align-items: center; font-weight: 600; }
+  .footer .chain span { color: #b8d4c4; }
+  .footer .right { display: flex; gap: 10px; align-items: center; }
+  .footer a { color: #b8d4c4; text-decoration: none; }
+</style>
+</head>
+<body>
+
+<div class="page">
+
+  <div class="header">
+    <div class="logo">🌾</div>
+    <div class="title-block">
+      <h1>HaploBreedR <small>— Superior Haplotype Discovery &amp; Breeding Decisions</small></h1>
+      <div class="tagline">From SNPs to superior haplotypes — faster, smarter, better breeding decisions.</div>
+    </div>
+    <div class="meta">
+      <div class="version">v0.99.1</div><br>
+      <div class="repo">
+        <a href="https://aksruchi.github.io/HaploBreedR/">aksruchi.github.io/HaploBreedR</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid">
+
+    <!-- 1. Installation -->
+    <div class="card c1">
+      <h2><span class="num">1</span> Installation &amp; Setup</h2>
+      <div class="label">Install from GitHub (latest version)</div>
+<pre><span class="comment"># install.packages("devtools")</span>
+devtools::install_github(
+  <span class="string">"aksruchi/HaploBreedR"</span>)</pre>
+      <div class="label">Load the package</div>
+<pre><span class="keyword">library</span>(HaploBreedR)</pre>
+      <div class="label">Optional dependencies</div>
+<pre><span class="comment"># For GO term annotation</span>
+BiocManager::install(<span class="string">"AnnotationDbi"</span>)
+<span class="comment"># For Excel export</span>
+install.packages(<span class="string">"openxlsx"</span>)</pre>
+      <div style="margin-top:auto;text-align:right;font-size:38px;">🌱</div>
+    </div>
+
+    <!-- 2. Quick Start -->
+    <div class="card c2">
+      <h2><span class="num">2</span> Quick Start Workflow</h2>
+      <div class="flow">
+        <div class="step s1">Discovery</div>
+        <span class="arrow">→</span>
+        <div class="step s2">Fit Models</div>
+        <span class="arrow">→</span>
+        <div class="step s3">Design Crosses</div>
+        <span class="arrow">→</span>
+        <div class="step s4">Figures &amp; Tables</div>
+      </div>
+      <ol class="steps">
+        <li>Prepare PLINK genotypes, GFF3 + FASTA reference, GWAS hits, and phenotypes.</li>
+        <li><a href="reference/haplobreed_analysis.html"><span class="fn">haplobreed_analysis()</span></a> identifies genes with superior haplotypes per trait.</li>
+        <li><a href="reference/hbr_fit_models.html"><span class="fn">hbr_fit_models()</span></a> fits two-kernel GBLUP; <a href="reference/hbr_cross_design.html"><span class="fn">hbr_cross_design()</span></a> ranks crosses.</li>
+        <li>Export manuscript tables (<a href="reference/hbr_build_manuscript_tables.html"><span class="fn">hbr_build_manuscript_tables()</span></a>) and figures.</li>
+      </ol>
+    </div>
+
+    <!-- 3. Data Input -->
+    <div class="card c3">
+      <h2><span class="num">3</span> Data Input</h2>
+      <div class="label">Supported formats</div>
+      <ul>
+        <li><b>Genotypes:</b> PLINK (.bed/.bim/.fam), .raw, VCF, HapMap, in-memory matrix</li>
+        <li><b>Reference:</b> GFF3 + CDS/pep/genome FASTA (local, MSU7, RAP-DB, Ensembl Plants)</li>
+        <li><b>GWAS hits:</b> data.frame with SNP, Chromosome, Position, P</li>
+        <li><b>Phenotypes:</b> data.frame with ID and one trait column per run</li>
+      </ul>
+      <div class="label">Example: load data</div>
+<pre>gwas  &lt;- <span class="keyword">read.csv</span>(<span class="string">"gwas_hits.csv"</span>)
+pheno &lt;- <span class="keyword">read.csv</span>(<span class="string">"phenotypes.csv"</span>)</pre>
+      <div style="margin-top:auto;text-align:right;font-size:34px;">📄</div>
+    </div>
+
+    <!-- 4. Discovery -->
+    <div class="card c4">
+      <h2><span class="num">4</span> Superior-Haplotype Discovery</h2>
+      <div class="label">Identify genes carrying superior haplotypes</div>
+<pre>res &lt;- <span class="keyword">haplobreed_analysis</span>(
+  plink_prefix     = <span class="string">"geno_259"</span>,
+  reference_source = <span class="string">"msu7"</span>,
+  gwas_snps        = gwas,
+  phenotype_data   = pheno,
+  trait_col        = <span class="string">"PHT"</span>,
+  direction        = <span class="string">"lower"</span>,
+  n_perm           = 1000L,
+  min_cohens_d     = 0.3,
+  require_fdr      = TRUE,
+  output_dir       = <span class="string">"analysis_PHT"</span>)</pre>
+      <div class="label">Inspect results</div>
+<pre><span class="keyword">head</span>(res$summary)
+res$superior_summary</pre>
+      <div style="margin-top:auto;text-align:right;font-size:34px;">🧬</div>
+    </div>
+
+    <!-- 5. Genomic Selection -->
+    <div class="card c5">
+      <h2><span class="num">5</span> Genomic Selection</h2>
+      <div class="label">Two-kernel GBLUP with honest nested CV</div>
+<pre>fit &lt;- <span class="keyword">hbr_fit_models</span>(
+  trait_dirs   = c(PHT = <span class="string">"analysis_PHT"</span>,
+                   GY  = <span class="string">"analysis_GY"</span>),
+  plink_prefix = <span class="string">"geno_259"</span>,
+  weights      = c(PHT = 1, GY = 2),
+  cv_repeats   = 10L,
+  cv_folds     = 5L,
+  strict       = TRUE,
+  output_dir   = <span class="string">"fit_out"</span>)</pre>
+      <div class="label">Model comparison</div>
+      <ul>
+        <li><b>M0</b> — genome-wide GBLUP baseline</li>
+        <li><b>M2</b> — two-kernel (naive feature selection)</li>
+        <li><b>M3</b> — in-fold gate replay (honest)</li>
+      </ul>
+<pre>fit$cv_summary
+fit$cv_compare</pre>
+    </div>
+
+    <!-- 6. Cross Design -->
+    <div class="card c6">
+      <h2><span class="num">6</span> Cross Design</h2>
+      <div class="label">Haplotype blocks, usefulness, and pyramiding</div>
+<pre>design &lt;- <span class="keyword">hbr_cross_design</span>(
+  fit,
+  haploblock_method = <span class="string">"recomb+gabriel"</span>,
+  mating            = <span class="string">"DH"</span>,
+  relatedness_max   = 0.30,
+  top_crosses       = 20L,
+  run_set_selection = TRUE,
+  set_size          = 8L)</pre>
+      <div class="label">Inspect decisions</div>
+<pre>design$crosses        <span class="comment"># top crosses</span>
+design$parents        <span class="comment"># ranked parents</span>
+design$blocks         <span class="comment"># target blocks</span>
+design$selected_set   <span class="comment"># SA parent set</span></pre>
+      <div style="margin-top:auto;text-align:right;font-size:34px;">📊</div>
+    </div>
+
+    <!-- 7. Standalone Tools -->
+    <div class="card c7">
+      <h2><span class="num">7</span> Standalone Building Blocks</h2>
+      <div class="label">Callable without the full pipeline</div>
+<pre><span class="comment"># Block calling on any target loci</span>
+<span class="keyword">hbr_haplotype_blocks</span>(
+  method = <span class="string">"recomb"</span>, units = my_units)
+
+<span class="comment"># Pyramiding probability</span>
+<span class="keyword">hbr_pyramid_probability</span>(
+  chr = c(<span class="string">"1"</span>,<span class="string">"1"</span>,<span class="string">"1"</span>),
+  cm  = c(10, 10.5, 11),
+  donor = c(0, 0, 0))
+
+<span class="comment"># Population size for 95% recovery</span>
+<span class="keyword">hbr_population_size</span>(p = 0.01)
+
+<span class="comment"># GRM + REML</span>
+<span class="keyword">hbr_build_grm</span>(<span class="string">"geno_259"</span>)</pre>
+    </div>
+
+    <!-- 8. Visualization -->
+    <div class="card c8">
+      <h2><span class="num">8</span> Visualization</h2>
+      <div class="label">Publication-quality figures</div>
+<pre><span class="keyword">hbr_plot_haplotype</span>(
+  gene_list  = <span class="string">"gene1"</span>,
+  output_dir = <span class="string">"figures"</span>,
+  formats    = <span class="string">"pdf"</span>)
+
+<span class="keyword">hbr_plot_gene_structure</span>(...)
+<span class="keyword">hbr_plot_haplotype_network</span>(...)
+<span class="keyword">hbr_plot_cross_ranking</span>(design)
+<span class="keyword">hbr_plot_cv_forest</span>(fit)</pre>
+      <div class="label">Themes and palettes</div>
+<pre><span class="keyword">hbr_palette</span>(<span class="string">"okabe_ito"</span>, n = 4)
+<span class="keyword">hbr_theme</span>(<span class="string">"scientific"</span>)</pre>
+    </div>
+
+    <!-- 9. Complete Example -->
+    <div class="card c9">
+      <h2><span class="num">9</span> Complete Example</h2>
+<pre><span class="comment"># 1. Identify superior haplotypes</span>
+res &lt;- <span class="keyword">haplobreed_analysis</span>(
+  plink_prefix     = <span class="string">"geno_259"</span>,
+  reference_source = <span class="string">"msu7"</span>,
+  gwas_snps        = gwas,
+  phenotype_data   = pheno,
+  trait_col        = <span class="string">"PHT"</span>,
+  direction        = <span class="string">"lower"</span>,
+  output_dir       = <span class="string">"analysis_PHT"</span>)
+
+<span class="comment"># 2. Fit genomic prediction models</span>
+fit &lt;- <span class="keyword">hbr_fit_models</span>(
+  trait_dirs   = c(PHT = <span class="string">"analysis_PHT"</span>),
+  plink_prefix = <span class="string">"geno_259"</span>,
+  output_dir   = <span class="string">"fit_out"</span>)
+
+<span class="comment"># 3. Design crosses</span>
+design &lt;- <span class="keyword">hbr_cross_design</span>(fit,
+  haploblock_method = <span class="string">"recomb+gabriel"</span>)
+
+<span class="comment"># 4. Manuscript tables</span>
+<span class="keyword">hbr_build_manuscript_tables</span>(
+  rds_file    = <span class="string">"analysis_PHT/pipeline_result_for_breeding.rds"</span>,
+  output_file = <span class="string">"tables.xlsx"</span>)</pre>
+    </div>
+
+  </div>
+
+  <div class="footer">
+    <div class="chain">
+      🌱 Better haplotypes <span>→</span> Better predictions <span>→</span> Better crops
+    </div>
+    <div class="right">
+      <span>🌾</span>
+      <b>HaploBreedR</b>
+      <span style="opacity:.7;">·</span>
+      <a href="https://aksruchi.github.io/HaploBreedR/">Documentation</a>
+      <span style="opacity:.7;">·</span>
+      <a href="https://github.com/aksruchi/HaploBreedR">GitHub</a>
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>
