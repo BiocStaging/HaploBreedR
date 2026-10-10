@@ -4,7 +4,6 @@
 #
 # ============================================================================
 
-
 # ----------------------------------------------------------------------------
 # Cross-annotation (MSU <-> RAP-DB) with GO terms
 # ----------------------------------------------------------------------------
@@ -73,8 +72,8 @@ hbr_add_cross_annotation <- function(
   ids_unique <- unique(ids_norm[!is.na(ids_norm) & nzchar(ids_norm)])
 
   if (verbose)
-    cat(sprintf("    org.Osativa.eg.db: %d unique %s ID(s) for lookup\n",
-                length(ids_unique), from_type))
+    message(sprintf("    org.Osativa.eg.db: %d unique %s ID(s) for lookup",
+                    length(ids_unique), from_type))
 
   map <- tryCatch(
     AnnotationDbi::select(org,

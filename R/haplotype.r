@@ -3,9 +3,6 @@
 # Variant discovery, haplotype matrix construction, and haplotype
 # grouping by subpopulation.
 #
-# Merged from: variant-identification.r, haplotype-build.r, subpopulation-freq.r
-# ============================================================================
-
 
 # ----------------------------------------------------------------------------
 # Variant identification helpers
@@ -281,7 +278,6 @@ hbr_map_snps_to_cds <- function(cds_map, ref_alt) {
       cds_end_i  <- as.numeric(cds_map[[cds_end_col]][i])
 
       if (is.na(start_i) || is.na(end_i) || is.na(cds_start_i)) next
-
       if (!is.na(chr_i) && chr_i != target_chr[1]) next
 
       lo <- findInterval(start_i, snps_chr$POS) + 1L
@@ -555,6 +551,18 @@ hbr_translate_variant <- function(cds_snps, fasta_tx, cds_seqs,
 
 #' Identify functional variants for one gene
 #'
+#' Resolves the gene ID against the GFF3, iterates over its FASTA-matched
+#' transcripts, maps SNPs to CDS exons and UTR intervals, translates the
+#' CDS hits, deduplicates across transcripts by keeping the highest-priority
+#' region per SNP, and returns the requested region subset.
+#'
+#' All console output is gated by `verbose`. The pipeline calls this
+#' function with `verbose = FALSE` from its per-gene loop so that only the
+#' parent's single status line is printed. Set `verbose = TRUE` to restore
+#' the detailed step-by-step narration (functional-variant banner,
+#' per-transcript counts, kept-SNP counts, REF-mismatch warning, frame
+#' warnings).
+#'
 #' @param rapdb_id RAP-DB or matching gene identifier.
 #' @param cds_dt CDS feature table.
 #' @param utr_dt UTR feature table.
@@ -564,6 +572,9 @@ hbr_translate_variant <- function(cds_snps, fasta_tx, cds_seqs,
 #' @param ref_alt SNP table.
 #' @param use_all_transcripts Use all FASTA-matched transcripts.
 #' @param regions_to_include Regions retained in `functional_snps`.
+#' @param verbose Print the step-by-step report. `FALSE` (default usage in
+#'   the per-gene loop) silences every message and `cat()` in this
+#'   function; `TRUE` restores the detailed narration.
 #'
 #' @return A list describing the gene's functional variants, or `NULL`.
 #'
@@ -574,23 +585,27 @@ hbr_get_functional_variants <- function(rapdb_id, cds_dt, utr_dt,
                                          use_all_transcripts = TRUE,
                                          regions_to_include =
                                            c("CDS_nonsynonymous",
-                                             "5UTR", "3UTR")) {
+                                             "5UTR", "3UTR"),
+                                         verbose = TRUE) {
 
-  message("\n  --- Functional variant identification ---")
+  vmsg <- function(...) if (isTRUE(verbose)) message(...)
+  vcat <- function(...) if (isTRUE(verbose)) cat(...)
+
+  vmsg("\n  --- Functional variant identification ---")
 
   gene_gff_id <- hbr_resolve_gene_id(rapdb_id, cds_dt, all_genes)
   if (is.null(gene_gff_id)) {
-    message("  Gene not found in GFF3: ", rapdb_id); return(NULL)
+    vmsg("  Gene not found in GFF3: ", rapdb_id); return(NULL)
   }
-  message("  GFF3 gene_id: ", gene_gff_id)
+  vmsg("  GFF3 gene_id: ", gene_gff_id)
 
   tx_table <- hbr_get_transcripts(gene_gff_id, cds_dt, cds_seqs)
   if (!nrow(tx_table)) {
-    cat("  No FASTA-matched transcript for:", gene_gff_id, "\n"); return(NULL)
+    vcat("  No FASTA-matched transcript for:", gene_gff_id, "\n"); return(NULL)
   }
   if (!use_all_transcripts) tx_table <- tx_table[1]
-  message("  Transcripts considered: ", nrow(tx_table),
-          " (", paste(tx_table$gff_tx, collapse = ", "), ")")
+  vmsg("  Transcripts considered: ", nrow(tx_table),
+       " (", paste(tx_table$gff_tx, collapse = ", "), ")")
 
   strand_g <- unique(cds_dt[gene_id == gene_gff_id, strand])[1]
 
@@ -620,8 +635,8 @@ hbr_get_functional_variants <- function(rapdb_id, cds_dt, utr_dt,
     cds_per_tx[[gff_tx]] <- snps_tx
   }
   if (length(frame_warnings))
-    message("  Frame-validation warning(s): ",
-            paste(frame_warnings, collapse = "; "))
+    vmsg("  Frame-validation warning(s): ",
+         paste(frame_warnings, collapse = "; "))
 
   if (length(cds_per_tx)) {
     cds_all <- data.table::rbindlist(cds_per_tx, fill = TRUE)
@@ -655,7 +670,7 @@ hbr_get_functional_variants <- function(rapdb_id, cds_dt, utr_dt,
   if (!"Region" %in% names(utr_all)) utr_all[, Region := character(.N)]
 
   if (!nrow(cds_all) && !nrow(utr_all)) {
-    cat("  No SNPs overlap CDS or UTR (any transcript)\n")
+    vcat("  No SNPs overlap CDS or UTR (any transcript)\n")
     return(NULL)
   }
 
@@ -683,29 +698,29 @@ hbr_get_functional_variants <- function(rapdb_id, cds_dt, utr_dt,
 
   cds_only <- combined_dedup[Region %in% c("CDS_nonsynonymous",
                                             "CDS_synonymous")]
-  cat("  CDS SNPs total       :", nrow(cds_only), "\n")
-  cat("    Synonymous         :", sum(cds_only$Region == "CDS_synonymous"),
+  vcat("  CDS SNPs total       :", nrow(cds_only), "\n")
+  vcat("    Synonymous         :", sum(cds_only$Region == "CDS_synonymous"),
       "\n")
-  cat("    Non-synonymous     :",
+  vcat("    Non-synonymous     :",
       sum(cds_only$Region == "CDS_nonsynonymous"), "\n")
-  cat("  5'UTR SNPs           :", sum(combined_dedup$Region == "5UTR"),
+  vcat("  5'UTR SNPs           :", sum(combined_dedup$Region == "5UTR"),
       "\n")
-  cat("  3'UTR SNPs           :", sum(combined_dedup$Region == "3UTR"),
+  vcat("  3'UTR SNPs           :", sum(combined_dedup$Region == "3UTR"),
       "\n")
 
   functional_snps <- combined_dedup[Region %in% regions_to_include]
   if (!nrow(functional_snps)) {
-    cat("  No SNPs in requested regions\n"); return(NULL)
+    vcat("  No SNPs in requested regions\n"); return(NULL)
   }
-  cat("  Functional SNPs kept (",
+  vcat("  Functional SNPs kept (",
       paste(regions_to_include, collapse = ","), "): ",
       nrow(functional_snps), "\n", sep = "")
-  cat("  Changes:",
+  vcat("  Changes:",
       paste(functional_snps$Variant_Label, collapse = ", "), "\n")
 
   n_ref_mismatch <- sum(!functional_snps$REF_Matches_FASTA, na.rm = TRUE)
   if (n_ref_mismatch > 0)
-    cat("  WARNING:", n_ref_mismatch,
+    vcat("  WARNING:", n_ref_mismatch,
         "CDS SNP(s) have a REF allele that does not match the reference ",
         "CDS FASTA base.\n")
 

@@ -2698,7 +2698,7 @@ hbr_clear_reference_cache <- function() {
     grid::grid.newpage()
     grid::grid.draw(fig)
   } else {
-    print(fig)
+    invisible(print(fig))
   }
   invisible(NULL)
 }

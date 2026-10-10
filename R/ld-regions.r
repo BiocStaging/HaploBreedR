@@ -3,10 +3,6 @@
 # LD-decay estimation, LD-window construction, and gene annotation of
 # LD regions.
 #
-# Merged from: ld-decay.r, ld-regions.r, annotate-regions.r
-# ============================================================================
-
-
 # ----------------------------------------------------------------------------
 # LD decay
 # ----------------------------------------------------------------------------
@@ -18,6 +14,11 @@
 #' below the requested threshold (interpolated between the two flanking
 #' bins). Inputs are validated against missing or malformed PLINK files.
 #'
+#' All console output is gated by `verbose`. `TRUE` (default) prints a
+#' single line reporting the estimated decay distance, the method used,
+#' and the number of SNP pairs and bins; `FALSE` silences everything
+#' except errors and warnings.
+#'
 #' @param plink_prefix PLINK file prefix or `.bed` path.
 #' @param plink Path to the PLINK executable.
 #' @param max_distance Maximum SNP-pair distance in bp.
@@ -25,7 +26,8 @@
 #' @param decay_threshold r-squared threshold for decay.
 #' @param use_median Use median r-squared per bin instead of mean.
 #' @param extra_plink_args Optional extra PLINK arguments.
-#' @param verbose Print progress.
+#' @param verbose Print a one-line summary. `TRUE` (default) reports the
+#'   decay distance, method, pair and bin counts; `FALSE` is silent.
 #'
 #' @return A structured list with `decay_distance_bp`,
 #'   `decay_distance_kb`, `bin_summary`, and diagnostic fields.
@@ -98,20 +100,6 @@ hbr_calc_ld_decay <- function(plink_prefix,
 
   ld_prefix <- file.path(temp_dir, "ld_decay")
 
-  if (verbose) {
-    message("")
-    message("==============================================")
-    message("LD DECAY CALCULATION")
-    message("==============================================")
-    message("PLINK dataset: ", prefix)
-    message("Maximum distance: ",
-            format(max_distance, big.mark = ",", scientific = FALSE), " bp")
-    message("Bin size: ",
-            format(bin_size, big.mark = ",", scientific = FALSE), " bp")
-    message("Threshold: r2 < ", decay_threshold)
-    message("Running PLINK LD calculation...")
-  }
-
   max_distance_kb <- ceiling(max_distance / 1000)
 
   plink_args <- c("--bfile", prefix,
@@ -137,8 +125,6 @@ hbr_calc_ld_decay <- function(plink_prefix,
          call. = FALSE)
   if (file.info(ld_file)$size == 0)
     stop("PLINK generated an empty LD file.", call. = FALSE)
-
-  if (verbose) message("PLINK LD calculation completed.")
 
   ld <- data.table::fread(ld_file, header = TRUE, showProgress = FALSE)
   if (!nrow(ld))
@@ -243,16 +229,11 @@ hbr_calc_ld_decay <- function(plink_prefix,
   mean_r2_overall       <- mean(ld$R2, na.rm = TRUE)
   median_r2_overall     <- stats::median(ld$R2, na.rm = TRUE)
 
-  if (verbose) {
-    message("")
-    message("LD decay distance: ",
-            format(round(decay_distance), big.mark = ","),
-            " bp (", sprintf("%.1f", decay_distance / 1000), " kb)")
-    message("SNP pairs analyzed: ", format(total_pairs, big.mark = ","))
-    message("Distance bins: ", format(n_bins, big.mark = ","))
-    message("Mean pairwise r2: ", sprintf("%.4f", mean_r2_overall))
-    message("Method: ", method_used)
-  }
+  if (isTRUE(verbose))
+    message(sprintf(
+      "LD decay: %.1f kb at r2 < %.2f (%s) | %s SNP pairs, %d bins",
+      decay_distance / 1000, decay_threshold, method_used,
+      format(total_pairs, big.mark = ","), n_bins))
 
   list(decay_distance_bp     = decay_distance,
        decay_distance_kb     = decay_distance / 1000,
@@ -986,7 +967,7 @@ hbr_read_gff3_genes <- function(gff3, verbose = TRUE) {
 #' hbr_annotate_regions_with_genes_msu(
 #'   regions, file.path(toy, "toy.gff3"), verbose = FALSE)
 #'
-#' @export
+#' @noRd
 hbr_annotate_regions_with_genes_msu <- function(
     regions, gff3,
     chr_col = "Chromosome",
@@ -1027,7 +1008,7 @@ hbr_annotate_regions_with_genes_msu <- function(
 #' hbr_annotate_regions_with_genes_rapdb(
 #'   regions, file.path(toy, "toy.gff3"), verbose = FALSE)
 #'
-#' @export
+#' @noRd
 hbr_annotate_regions_with_genes_rapdb <- function(
     regions, gff3,
     chr_col = "Chromosome",

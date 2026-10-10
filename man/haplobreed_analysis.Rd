@@ -199,18 +199,43 @@ size gates.}
 
 \item{save_breeding_rds}{Save `pipeline_result_for_breeding.rds`.}
 
-\item{rds_compress}{Compression of the RDS file(s).}
+\item{rds_compress}{Compression of the RDS file(s). One of `"fast"`,
+`"none"`, `"xz"`.}
 
-\item{rds_reference}{Where the reference sequences are saved.}
+\item{rds_reference}{Where the reference sequences are saved: 
+`"embedded"` (inside the breeding RDS), `"separate"` (a sibling
+`pipeline_reference.rds`), or `"none"` (drop the sequences).}
 
 \item{save_plot}{If `FALSE`, no figures are written.}
 
-\item{store_all_results}{Retain every per-gene result.}
+\item{store_all_results}{Retain every per-gene result. `TRUE` keeps the
+full per-gene object for every tested gene; memory grows linearly with
+the number of genes. Prefer the CSVs on disk unless the caller really
+needs every gene in memory.}
 
-\item{verbose}{Print progress.}
+\item{verbose}{Print progress. `TRUE` prints one concise status line
+per pipeline phase and per gene; `FALSE` prints nothing except
+errors and warnings.}
 }
 \value{
-Invisibly, a list with the pipeline result.
+Invisibly, a list with the pipeline result. Notable elements:
+  \describe{
+    \item{`reference`}{the `hbr_reference` object used, minus the
+      genome FASTA if it was not needed for plotting}
+    \item{`geno_mat`}{the `hbr_genotype` source (streaming or in-memory)}
+    \item{`geno_ids`}{character vector of the individuals that survived
+      ID matching}
+    \item{`superior_results`}{list per superior gene: `ns_result`,
+      `geno_data`, `hap_mat`, `hap_data`, `test_res`, `superior`,
+      `sp_freq`, `gene_annotation`}
+    \item{`summary`, `superior_summary`, `attrition`}{per-gene tables
+      also written to CSV}
+    \item{`phenotype_data`}{the cleaned ID + trait table actually used}
+    \item{`functional_snps_all`}{every functional SNP considered
+      across all tested genes}
+    \item{`gate_params`}{the gate parameter list, so downstream tools
+      can replay the gate without re-parsing the summary}
+  }
 }
 \description{
 Runs reference and genotype preparation, candidate-gene definition
@@ -222,21 +247,20 @@ several traits call this function once per trait with distinct
 `trait_col` / `output_dir`.
 }
 \examples{
-\donttest{
-if (interactive()) {
-  toy <- system.file("extdata", "toy", package = "HaploBreedR")
-  res <- haplobreed_analysis(
-    plink_prefix     = file.path(toy, "toy"),
-    reference_source = "local",
-    gff3             = file.path(toy, "toy.gff3"),
-    cds              = file.path(toy, "toy.fa"),
-    gwas_snps        = read.csv(file.path(toy, "toy_gwas.csv")),
-    phenotype_data   = read.csv(file.path(toy, "toy_pheno.csv")),
-    trait_col        = "trait",
-    direction        = "higher",
-    output_dir       = tempdir(),
-    save_plot        = FALSE)
-}
-}
+toy <- system.file("extdata", "toy", package = "HaploBreedR")
+res <- try(haplobreed_analysis(
+  plink_prefix     = file.path(toy, "toy"),
+  reference_source = "local",
+  gff3             = file.path(toy, "toy.gff3"),
+  cds              = file.path(toy, "toy.fa"),
+  gwas_snps        = read.csv(file.path(toy, "toy_gwas.csv")),
+  phenotype_data   = read.csv(file.path(toy, "toy_pheno.csv")),
+  trait_col        = "trait",
+  direction        = "higher",
+  output_dir       = tempdir(),
+  save_plot        = FALSE,
+  n_perm           = 100L,
+  n_boot           = 100L,
+  verbose          = FALSE))
 
 }

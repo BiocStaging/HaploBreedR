@@ -1,0 +1,2 @@
+trait,direction,pcs,phenotypes,tested_genes,functional_snps
+trait1,higher,none,phenotype_data_used.csv,publication_table_functional.csv,functional_snps_all_tested_genes.csv

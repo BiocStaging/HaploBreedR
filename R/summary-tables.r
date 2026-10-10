@@ -2,10 +2,6 @@
 # R/summary-tables.r
 # Publication summary row construction and gene-object loading from CSV.
 #
-# Merged from: summary-tables.r, csv-loader.r
-# ============================================================================
-
-
 # ----------------------------------------------------------------------------
 # Summary row construction
 # ----------------------------------------------------------------------------

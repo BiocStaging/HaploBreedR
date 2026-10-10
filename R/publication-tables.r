@@ -247,17 +247,11 @@ hbr_build_manuscript_tables <- function(
     Superior_Haplotypes     = list(builder = .hbr_mt_build_superior_haplotypes),
     All_Tested_Genes        = list(builder = .hbr_mt_build_all_genes),
     Gene_Attrition          = list(builder = .hbr_mt_build_attrition),
-    Donor_Summary           = list(builder = .hbr_mt_build_donor_summary),
-    Donor_Gene_Matrix       = list(builder = .hbr_mt_build_donor_matrix),
-    Donor_Dosage_Matrix     = list(builder = .hbr_mt_build_dosage_matrix),
-    Donor_Region_Coverage   = list(builder = .hbr_mt_build_donor_regions),
-    Shortlist               = list(builder = .hbr_mt_build_shortlist),
-    Cross_Design            = list(builder = .hbr_mt_build_cross_design),
+    Parents_Ranked          = list(builder = .hbr_mt_build_parents_ranked),
     Cross_Predictions       = list(builder = .hbr_mt_build_cross_predictions),
-    MAS_Panel               = list(builder = .hbr_mt_build_mas_panel),
-    MAS_Plate_Map           = list(builder = .hbr_mt_build_mas_plate_map),
-    MABB_Plan               = list(builder = .hbr_mt_build_mabb_plan),
-    MABB_Pop_Size           = list(builder = .hbr_mt_build_mabb_pop),
+    Haplotype_Blocks        = list(builder = .hbr_mt_build_blocks_table),
+    Selected_Parents_Blocks = list(builder = .hbr_mt_build_selected_blocks),
+    Cross_Validation        = list(builder = .hbr_mt_build_cv_summary),
     GO_Enrichment           = list(builder = .hbr_mt_build_go_enrichment),
     Subpop_Haplotype_Freq   = list(builder = .hbr_mt_build_subpop_freq)
   )
@@ -324,85 +318,36 @@ hbr_build_manuscript_tables <- function(
 }
 
 #' @noRd
-.hbr_mt_build_donor_summary <- function(output_dir, rds, trait_col, ...) {
-  p <- .hbr_mt_find_donor_file(output_dir, "Superior_Haplotype_Donor_Summary.csv")
-  if (is.null(p)) return(NULL)
-  data.table::fread(p, na.strings = c("", "NA"))
-}
-
-#' @noRd
-.hbr_mt_build_donor_matrix <- function(output_dir, rds, trait_col, ...) {
-  p <- file.path(output_dir, "breeding_extensions",
-                 "donor_haplotype_matrix.csv")
-  if (!file.exists(p)) return(NULL)
-  data.table::fread(p, na.strings = c("", "NA"))
-}
-
-#' @noRd
-.hbr_mt_build_dosage_matrix <- function(output_dir, rds, trait_col, ...) {
-  p <- file.path(output_dir, "breeding_extensions",
-                 "donor_dosage_matrix.csv")
-  if (!file.exists(p)) return(NULL)
-  data.table::fread(p, na.strings = c("", "NA"))
-}
-
-#' @noRd
-.hbr_mt_build_donor_regions <- function(output_dir, rds, trait_col, ...) {
-  p <- .hbr_mt_find_donor_file(output_dir,
-                                "Superior_Haplotype_Donor_Regions.csv")
-  if (is.null(p)) return(NULL)
-  data.table::fread(p, na.strings = c("", "NA"))
-}
-
-#' @noRd
-.hbr_mt_build_shortlist <- function(output_dir, rds, trait_col, ...) {
-  p <- file.path(output_dir, "breeding_report", "06_shortlist.csv")
-  if (!file.exists(p)) return(NULL)
-  data.table::fread(p, na.strings = c("", "NA"))
-}
-
-#' @noRd
-.hbr_mt_build_cross_design <- function(output_dir, rds, trait_col, ...) {
-  p <- file.path(output_dir, "breeding_report",
-                 "cross_design_ranking.csv")
+.hbr_mt_build_parents_ranked <- function(output_dir, rds, trait_col, ...) {
+  p <- file.path(output_dir, "hgsi", "advanced_parents_ranked.csv")
   if (!file.exists(p)) return(NULL)
   data.table::fread(p, na.strings = c("", "NA"))
 }
 
 #' @noRd
 .hbr_mt_build_cross_predictions <- function(output_dir, rds, trait_col, ...) {
-  p <- file.path(output_dir, "breeding_extensions",
-                 "cross_predictions.csv")
+  p <- file.path(output_dir, "hgsi", "advanced_crosses_predicted.csv")
   if (!file.exists(p)) return(NULL)
   data.table::fread(p, na.strings = c("", "NA"))
 }
 
 #' @noRd
-.hbr_mt_build_mas_panel <- function(output_dir, rds, trait_col, ...) {
-  p <- file.path(output_dir, "breeding_extensions", "MAS_panel.csv")
+.hbr_mt_build_blocks_table <- function(output_dir, rds, trait_col, ...) {
+  p <- file.path(output_dir, "hgsi", "advanced_blocks_table.csv")
   if (!file.exists(p)) return(NULL)
   data.table::fread(p, na.strings = c("", "NA"))
 }
 
 #' @noRd
-.hbr_mt_build_mas_plate_map <- function(output_dir, rds, trait_col, ...) {
-  p <- file.path(output_dir, "breeding_extensions",
-                 "MAS_panel_plate_map.csv")
+.hbr_mt_build_selected_blocks <- function(output_dir, rds, trait_col, ...) {
+  p <- file.path(output_dir, "hgsi", "advanced_selected_set_blocks.csv")
   if (!file.exists(p)) return(NULL)
   data.table::fread(p, na.strings = c("", "NA"))
 }
 
 #' @noRd
-.hbr_mt_build_mabb_plan <- function(output_dir, rds, trait_col, ...) {
-  p <- file.path(output_dir, "breeding_extensions", "MABB_plan.csv")
-  if (!file.exists(p)) return(NULL)
-  data.table::fread(p, na.strings = c("", "NA"))
-}
-
-#' @noRd
-.hbr_mt_build_mabb_pop <- function(output_dir, rds, trait_col, ...) {
-  p <- file.path(output_dir, "breeding_extensions",
-                 "MABB_population_sizes.csv")
+.hbr_mt_build_cv_summary <- function(output_dir, rds, trait_col, ...) {
+  p <- file.path(output_dir, "hgsi", "advanced_cv_summary.csv")
   if (!file.exists(p)) return(NULL)
   data.table::fread(p, na.strings = c("", "NA"))
 }
@@ -661,14 +606,7 @@ hbr_build_manuscript_tables <- function(
   if (is.na(hit)) NULL else hit
 }
 
-#' @noRd
-.hbr_mt_find_donor_file <- function(output_dir, filename) {
-  candidates <- c(
-    file.path(output_dir, "superior_genes", filename),
-    file.path(output_dir, filename))
-  hit <- candidates[file.exists(candidates)][1]
-  if (is.na(hit)) NULL else hit
-}
+
 
 #' @noRd
 .hbr_mt_excel_colnames <- function(x) {

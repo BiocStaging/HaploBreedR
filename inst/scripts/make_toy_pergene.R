@@ -51,7 +51,9 @@ write.csv(ind, file.path(out, paste0(gene, "_individuals.csv")),
           row.names = FALSE)
 
 # ---- Long-format gene/haplotype summary consumed by hbr_plot_haplotype() ----
-# 3 SNPs per haplotype, matching nt_sequence "A-C-G" / "A-T-G"
+# The column names here are the exact names hbr_build_gene_object() reads:
+#   snp_N_id, snp_N_pos, snp_N_ref, snp_N_alt, snp_N_region,
+#   snp_N_aa_change, snp_N_codon_num (one block of seven per SNP).
 viz <- data.frame(
   gene_id     = rep(gene, 2L),
   chromosome  = rep("1", 2L),
@@ -65,15 +67,31 @@ viz <- data.frame(
   ci_upper    = c(118.9, 102.5),
   nt_sequence = c("A-C-G", "A-T-G"),
   aa_sequence = c("Met-Ala-Val", "Met-Ser-Val"),
-  snp_1_id    = c("snp005", "snp005"),
-  snp_2_id    = c("snp020", "snp020"),
-  snp_3_id    = c("snp045", "snp045"),
-  snp_1_pos   = c(1800L, 1800L),
-  snp_2_pos   = c(4800L, 4800L),
-  snp_3_pos   = c(9800L, 9800L),
-  snp_1_allele= c("A",     "A"),
-  snp_2_allele= c("C",     "T"),
-  snp_3_allele= c("G",     "G"),
+
+  snp_1_id        = c("snp005", "snp005"),
+  snp_1_pos       = c(1800L, 1800L),
+  snp_1_ref       = c("A", "A"),
+  snp_1_alt       = c("T", "T"),
+  snp_1_region    = c("CDS_nonsynonymous", "CDS_nonsynonymous"),
+  snp_1_aa_change = c("A76S", "A76S"),
+  snp_1_codon_num = c(76L, 76L),
+
+  snp_2_id        = c("snp020", "snp020"),
+  snp_2_pos       = c(4800L, 4800L),
+  snp_2_ref       = c("C", "C"),
+  snp_2_alt       = c("T", "T"),
+  snp_2_region    = c("5UTR", "5UTR"),
+  snp_2_aa_change = c(NA, NA),
+  snp_2_codon_num = c(NA, NA),
+
+  snp_3_id        = c("snp045", "snp045"),
+  snp_3_pos       = c(9800L, 9800L),
+  snp_3_ref       = c("G", "G"),
+  snp_3_alt       = c("A", "A"),
+  snp_3_region    = c("3UTR", "3UTR"),
+  snp_3_aa_change = c(NA, NA),
+  snp_3_codon_num = c(NA, NA),
+
   stringsAsFactors = FALSE)
 
 # --- metadata columns the gene-object parser reads (hbr_build_gene_object) ---

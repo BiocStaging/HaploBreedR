@@ -3,10 +3,6 @@
 # Cross-cutting helpers: ID cleaning, safe coercion, PLINK invocation,
 # logging, genetics utilities, and HGVS formatting.
 #
-# Merged from: utils-core.r, utils-genetics.r, utils-hgvs.r
-# ============================================================================
-
-
 # ----------------------------------------------------------------------------
 # Core helpers
 # ----------------------------------------------------------------------------
@@ -285,7 +281,7 @@ hbr_standardize_chr <- function(x) {
 #' hbr_normalize_osa1_gene_id("Os01g0100100.1")
 #' @return Character vector.
 #'
-#' @export
+#' @noRd
 hbr_normalize_osa1_gene_id <- function(x) {
   x <- as.character(x)
   x <- trimws(x)
@@ -411,7 +407,7 @@ hbr_pack_genotypes <- function(m, chunk_cols = NULL) {
 #' m <- matrix(c(0, 1, 2, NA), nrow = 2)
 #' hbr_unpack_genotypes(m)
 #'
-#' @export
+#' @noRd
 hbr_unpack_genotypes <- function(x, as_integer = TRUE, chunk_cols = NULL) {
   if (!inherits(x, "hbr_packed_geno")) return(x)
   d  <- dim(x); dn <- dimnames(x)
@@ -429,6 +425,131 @@ hbr_unpack_genotypes <- function(x, as_integer = TRUE, chunk_cols = NULL) {
   dimnames(out) <- dn
   out
 }
+
+#' Write `pipeline_result_for_breeding.rds`
+#'
+#' Accepts either an in-memory numeric matrix or an `hbr_genotype`
+#' streaming source in the `geno_mat` argument. When the argument is an
+#' `hbr_genotype` the packing is streamed from the underlying BEDMatrix
+#' so peak memory stays at one chunk. The function never loses the run:
+#' if packing fails, the RDS is written without the genotype matrix and
+#' a warning says so; the matrix can always be re-read from
+#' `plink_prefix`.
+#'
+#' @param geno_mat Numeric matrix OR `hbr_genotype`.
+#' @inheritParams .hbr_write_breeding_rds (see code)
+#'
+#' @return A list with `rds`, `reference_rds`, `genotype_saved`.
+#'
+#' @noRd
+.hbr_write_breeding_rds <- function(superior_results, geno_mat, reference,
+                                    ref_paths, plink_prefix, pipeline_summary,
+                                    output_dir,
+                                    rds_compress  = c("fast", "none", "xz"),
+                                    rds_reference = c("embedded", "separate", "none"),
+                                    verbose = TRUE) {
+  
+  rds_compress  <- match.arg(rds_compress)
+  rds_reference <- match.arg(rds_reference)
+  t0       <- Sys.time()
+  rds_path <- file.path(output_dir, "pipeline_result_for_breeding.rds")
+  ref_path <- file.path(output_dir, "pipeline_reference.rds")
+  
+  save_rds_fast <- function(obj, path) {
+    if (rds_compress == "none") {
+      saveRDS(obj, path, compress = FALSE)
+    } else if (rds_compress == "xz") {
+      saveRDS(obj, path, compress = "xz")
+    } else {
+      con <- gzfile(path, "wb", compression = 1L)
+      on.exit(try(close(con), silent = TRUE), add = TRUE)
+      serialize(obj, con)
+      close(con)
+    }
+    invisible(path)
+  }
+  
+  is_seq <- if (is.list(reference))
+    vapply(reference, function(x) inherits(x, "XStringSet"), logical(1))
+  else logical(0)
+  ref_main <- reference; dropped_ref <- character(0)
+  ref_file_out <- NA_character_
+  if (rds_reference != "embedded" && is.list(reference)) {
+    ref_main    <- reference[!is_seq]
+    dropped_ref <- names(reference)[is_seq]
+    if (rds_reference == "separate") {
+      save_rds_fast(reference, ref_path)
+      ref_file_out <- ref_path
+    }
+  }
+  
+  invisible(gc(verbose = FALSE))
+  
+  geno_ids <- if (inherits(geno_mat, "hbr_genotype"))
+    geno_mat$individuals
+  else if (!is.null(geno_mat)) rownames(geno_mat)
+  else NULL
+  
+  geno_dim <- if (inherits(geno_mat, "hbr_genotype"))
+    c(geno_mat$n_individuals, length(geno_mat$canonical_snp_names))
+  else if (!is.null(geno_mat)) dim(geno_mat)
+  else NULL
+  
+  geno_saved <- !is.null(geno_mat)
+  packed <- tryCatch(
+    hbr_pack_genotypes(geno_mat),
+    error = function(e) {
+      warning("Genotype packing failed (", conditionMessage(e),
+              "): the RDS will not contain the genotype matrix.",
+              call. = FALSE)
+      geno_saved <<- FALSE
+      NULL
+    })
+  
+  build <- function(g) list(
+    superior_results  = superior_results,
+    geno_mat          = g,
+    geno_packed       = inherits(g, "hbr_packed_geno"),
+    geno_saved        = geno_saved && !is.null(g),
+    geno_ids          = geno_ids,
+    geno_dim          = geno_dim,
+    plink_prefix      = plink_prefix,
+    reference         = ref_main,
+    reference_mode    = rds_reference,
+    reference_dropped = dropped_ref,
+    reference_file    = ref_file_out,
+    reference_paths   = ref_paths,
+    pipeline_summary  = pipeline_summary)
+  
+  ok <- tryCatch({ save_rds_fast(build(packed), rds_path); TRUE },
+                 error = function(e) {
+                   warning("Writing the RDS with the genotype matrix failed (",
+                           conditionMessage(e), "); retrying without it.",
+                           call. = FALSE)
+                   FALSE })
+  if (!ok) {
+    geno_saved <- FALSE
+    save_rds_fast(build(NULL), rds_path)
+    warning("RDS saved WITHOUT the genotype matrix; re-read it from ",
+            "`plink_prefix` ('", plink_prefix, "').", call. = FALSE)
+  }
+  
+  if (verbose) {
+    cat(sprintf("\nBreeding RDS saved: %s (%.1f MB)%s\n", rds_path,
+                file.size(rds_path) / 1e6,
+                if (geno_saved) "" else "  [no genotype matrix]"))
+    if (!is.na(ref_file_out))
+      cat(sprintf("Reference RDS saved: %s (%.1f MB)\n", ref_file_out,
+                  file.size(ref_file_out) / 1e6))
+    cat(sprintf("RDS time: %.1fs | compression: %s | reference: %s\n",
+                as.numeric(difftime(Sys.time(), t0, units = "secs")),
+                rds_compress, rds_reference))
+  }
+  invisible(list(rds = rds_path, reference_rds = ref_file_out,
+                 genotype_saved = geno_saved))
+}
+
+
 
 #' Load the LD-region to gene mapping from a pipeline output directory
 #'
@@ -631,16 +752,25 @@ hbr_unpack_genotypes <- function(x, as_integer = TRUE, chunk_cols = NULL) {
 #'
 #' @noRd
 .with_seed <- function(seed, expr) {
-  old <- if (exists(".Random.seed", envir = globalenv()))
-    get(".Random.seed", envir = globalenv()) else NULL
-  on.exit({
-    if (is.null(old)) {
-      if (exists(".Random.seed", envir = globalenv()))
-        rm(".Random.seed", envir = globalenv())
-    } else {
-      assign(".Random.seed", old, envir = globalenv())
-    }
-  })
-  set.seed(seed)
-  force(expr)
+  withr::with_seed(seed, force(expr))
+}
+
+#' Summary of the bundled rice genetic map
+#'
+#' @return A one-row data.frame with the number of anchors, chromosomes,
+#'   and total genetic length.
+#' @examples
+#' hbr_rice_genetic_map_summary()
+#' @noRd
+hbr_rice_genetic_map_summary <- function() {
+  m <- hbr_rice_genetic_map()
+  per <- stats::aggregate(cm ~ chr, data = m,
+                          FUN = function(v) diff(range(v)))
+  names(per)[2] <- "length_cM"
+  data.frame(
+    n_markers  = nrow(m),
+    n_chrom    = length(unique(m$chr)),
+    total_cM   = round(sum(per$length_cM), 1),
+    source     = attr(m, "source"),
+    stringsAsFactors = FALSE)
 }

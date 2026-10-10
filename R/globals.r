@@ -23,7 +23,7 @@ utils::globalVariables(c(
   "Is_Nonsynonymous", "AA_Validated", "REF_Matches_FASTA",
   "Variant_Label", "Genomic_Order", "Region",
   "NS_Transcripts", ".rank", "liftover_status",
-  "A1", "A2", "BP", "overlap", "dist",
+  "A1", "A2", "BP", "overlap", "dist", "poskey",
 
   # ---- haplotype table ----
   "Haplotype", "NT_Sequence", "AA_Sequence", "Count", "Frequency",
@@ -43,7 +43,7 @@ utils::globalVariables(c(
   ".Region_Chr", ".Region_Start", ".Region_End",
   ".Gene_Chr", ".Gene_Start", ".Gene_End",
   ".join_start", ".join_end",
-  "N_Unique_GWAS_SNPs", ".snps_usable", ".rowid", "poskey",
+  "N_Unique_GWAS_SNPs", ".snps_usable", ".rowid",
   "n_positions", "n_chr", "n_pos", "bin", "GenomicPos", "ChrPos_Start",
 
   # ---- association test ----
@@ -62,17 +62,50 @@ utils::globalVariables(c(
   "Significant_FDR", "Significant_Nominal", "Significant_Permutation",
   "Annotation_Source", "Exit_Stage", "i.Position", "ID",
 
+  # ---- genetic map / bins ----
+  "chr", "cm", "bp", "source",
+  "length_cM", "n_markers", "n_chrom", "total_cM",
+  "bin_of", "center", "snp_col",
+  "gene_bin", "gene_chr", "gene_cm", "gene_first",
+
+  # ---- cross design / block methods ----
+  "units", "block", "carry", "ucarry",
+  "n_target_haplotypes", "n_genes", "genes", "traits", "panel_freq",
+  "start_cM", "end_cM",
+  "n_blocks_fixed", "n_blocks_segregating", "n_blocks_split",
+  "n_blocks_incomplete", "n_blocks_covered", "n_blocks_target",
+  "n_blocks_full", "n_blocks_partial",
+  "p_pyramid_DH", "p_pyramid_F2", "p_pyramid_F2_hom",
+  "n_DH_95", "n_F2_95", "n_F2hom_95",
+  "mid_index", "sd_index", "uc", "relatedness",
+  "parent_a", "parent_b", "rank", "pa", "pb",     # pa/pb: hbr_plot_cross_landscape
+  "unique_blocks", "set_blocks_covered", "n_blocks", "coverage",
+  "truncation_coverage", "uncovered_blocks",
+  "hap_info", "hap_eff", "w_eff", "bins", "pairs", "sel_frac", "h_sel",
+  "feasible", "mean_relatedness",
+
+  # ---- CV / comparison / prediction quality ----
+  "method", "baseline", "metric", "n_genes",
+  "boot_lo", "boot_hi", "mean_diff", "sig", "row_label",
+  "comparison", "cmp_order",
+  "naive", "honest", "optimism", "kind", "gain", "top_frac",
+  "pred", "obs", "rel", "carrier", "value",
+  "M0", "M2", "M3",
+  "ntrain", "ntest", "n_features", "n_obs",
+  "cross_id", "rank_mid", "rank_uc", "shift",     # hbr_plot_cross_ranking
+
   # ---- breeding decision ----
-  "id", "index", "rank", "P_top15", "phenos", "index_SE",
+  "id", "index", "P_top15", "phenos", "index_SE",
   "g_M0", "g_M2", "rel_M0", "rel_M2", "PEV_M2",
-  "sigma2_g", "sigma2_e", "w_hat", "n_features", "n_obs",
-  "p1", "p2", "mid_index", "relatedness", "coverage", "complement",
-  "n_regions", "score", "trait", "direction", "mode",
+  "sigma2_g", "sigma2_e", "w_hat",
+  "p1", "p2", "complement", "n_regions", "score",
+  "trait", "direction", "mode",
   "tested", "superior", "action", "mean_rel", "haplo_cov", "n_crosses",
-  "pred", "pred_base", "pred_m", "method", "is_superior",
+  "pred_base", "pred_m", "is_superior",
   "Donor", "Complete_Region",
   "N_Superior_In_Region", "N_Superior_Genes_In_Region",
   "N_Total_Genes_In_Region", "n_traits",
+  "parent", "panel", "selected",                  # hbr_plot_parent_profile / selected_set_coverage
 
   # ---- cross-annotation / publication table ----
   "Gene", "Gene_ID", "Gene_Function", "Gene_Chromosome",
@@ -94,7 +127,7 @@ utils::globalVariables(c(
   "pct", "aspect", "GO", "ONTOLOGY", "Aspect",
 
   # ---- subpopulation ----
-  "value", "Total", "Freq_pct", "Subpopulation",
+  "Total", "Freq_pct", "Subpopulation",
 
   # ---- gene model / GFF3 ----
   "Type", "Attributes", "Parent", "Length_Source", "UTR_Type",
@@ -112,6 +145,13 @@ utils::globalVariables(c(
   "neglogP", "P", "r2", "in_highlight",
   "Expected", "Observed", "density",
   "cap_out", "species",
+  
+  # ---- plot-layer  ----
+  "pa", "pb",                     # hbr_plot_cross_landscape
+  "rank_uc", "rank_mid", "shift", "cross_id",  # hbr_plot_cross_ranking
+  "parent",                       # hbr_plot_parent_profile
+  "panel", "selected",            # hbr_plot_selected_set_coverage
+  "top_frac",                     # .hgsi_compare (after fix 6b)
 
   # ---- haplotypes / workbook ----
   "REF_ref", "concordant", "n_unique_hap",

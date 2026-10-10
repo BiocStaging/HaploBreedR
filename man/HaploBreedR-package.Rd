@@ -11,20 +11,36 @@ genotype data, tests haplotype-trait associations, applies effect-size
 and permutation gates, and produces multi-trait breeding
 recommendations.
 }
+\section{Optional parallel backend}{
+
+When `n_cores > 1`, the GRM builder uses `future` and `future.apply`
+for parallel block computation. Install those packages if you need
+multi-core GRM construction; otherwise the builder runs sequentially.
+}
+
+\section{Function length}{
+
+The package deliberately keeps several long orchestration functions
+(\code{haplobreed_analysis()} and \code{hbr_advanced_decision()}) as
+single entry points. Splitting them would require passing dozens of
+intermediate objects between helpers, which increases coupling without
+improving readability. All internal helpers are shorter than 50 lines.
+}
+
 \seealso{
 Useful links:
 \itemize{
-  \item \url{https://github.com/<aksruchi>/HaploBreedR}
-  \item Report bugs at \url{https://github.com/<aksruchi>/HaploBreedR/issues}
+  \item \url{https://github.com/aksruchi/HaploBreedR}
+  \item Report bugs at \url{https://github.com/aksruchi/HaploBreedR/issues}
 }
 
 }
 \author{
-\strong{Maintainer}: Akansha Singh \email{akansha.iasbhu@gmail.com} (\href{https://orcid.org/0000-0002-4916-7296}{ORCID})
+\strong{Maintainer}: Dr. Akansha Singh \email{akansha.iasbhu@gmail.com} (\href{https://orcid.org/0000-0002-4916-7296}{ORCID})
 
 Authors:
 \itemize{
-  \item Akansha Singh \email{akansha.iasbhu@gmail.com} (\href{https://orcid.org/0000-0002-4916-7296}{ORCID})
+  \item Dr. Akansha Singh \email{akansha.iasbhu@gmail.com} (\href{https://orcid.org/0000-0002-4916-7296}{ORCID})
 }
 
 }

@@ -14,3 +14,8 @@
 ^\.Ruserdata$
 ^doc$
 ^Meta$
+^docs$
+^data-raw$
+^pkgdown$
+^_pkgdown\.yml$
+^HaploBreedR_pkgdown\.yml$

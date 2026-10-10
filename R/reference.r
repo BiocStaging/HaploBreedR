@@ -3,12 +3,6 @@
 # Reference object construction, remote fetch (MSU7, RAP-DB, Ensembl Plants),
 # sequence QC, functional annotation, and gene characterization.
 #
-# The chromosome-standardization patch is applied inside
-# hbr_load_reference(), so the pipeline no longer needs the six-line
-# standardize block in Phase A.1.
-# ============================================================================
-
-
 # ----------------------------------------------------------------------------
 # Crop lookup
 # ----------------------------------------------------------------------------
@@ -493,12 +487,18 @@ hbr_refresh_crop_lookup <- function(release = 63L, write_cache = TRUE,
 #' [hbr_standardize_chr()] so they match the genotype convention applied
 #' by [hbr_normalize_genotype()].
 #'
+#' All console output is gated by `verbose`. `TRUE` (default) reports the
+#' paths being read, gene/transcript counts, and the sequence-QC status;
+#' `FALSE` is silent (errors and warnings still fire).
+#'
 #' @param genome Genome build label.
 #' @param annotation One of `"MSU7"`, `"RAPDB"`, `"CUSTOM"`.
 #' @param gff3 Path to a GFF3 file.
 #' @param cds Optional CDS FASTA path.
 #' @param pep Optional peptide FASTA path.
 #' @param genome_fasta Optional whole-genome FASTA path.
+#' @param verbose Print progress. `TRUE` (default) reports loading steps;
+#'   `FALSE` silences everything except errors.
 #'
 #' @return A list of class `hbr_reference`.
 #'
@@ -508,9 +508,11 @@ hbr_load_reference <- function(genome,
                                gff3,
                                cds = NULL,
                                pep = NULL,
-                               genome_fasta = NULL) {
+                               genome_fasta = NULL,
+                               verbose = TRUE) {
 
   annotation <- match.arg(annotation)
+  vcat <- function(...) if (isTRUE(verbose)) cat(...)
 
   if (missing(gff3) || is.null(gff3) || !file.exists(gff3))
     stop("hbr_load_reference(): `gff3` is required and must exist. Got: ",
@@ -523,8 +525,8 @@ hbr_load_reference <- function(genome,
     stop("hbr_load_reference(): `genome_fasta` file not found: ",
          genome_fasta, call. = FALSE)
 
-  cat("Loading reference:", genome, "/", annotation, "\n")
-  cat("  GFF3:", gff3, "\n")
+  vcat("Loading reference:", genome, "/", annotation, "\n")
+  vcat("  GFF3:", gff3, "\n")
 
   gff_raw <- rtracklayer::import(gff3)
   gff_df  <- data.table::as.data.table(as.data.frame(gff_raw))
@@ -596,7 +598,7 @@ hbr_load_reference <- function(genome,
   # ---- Optional sequence resources ----
   cds_seqs <- pep_seqs <- genome_seqs <- NULL
   if (!is.null(cds)) {
-    cat("  CDS FASTA:", cds, "\n")
+    vcat("  CDS FASTA:", cds, "\n")
     cds_seqs <- Biostrings::readDNAStringSet(cds)
     names(cds_seqs) <- gsub(
       "^transcript:", "",
@@ -605,7 +607,7 @@ hbr_load_reference <- function(genome,
              character(1)))
   }
   if (!is.null(pep)) {
-    cat("  Peptide FASTA:", pep, "\n")
+    vcat("  Peptide FASTA:", pep, "\n")
     pep_seqs <- Biostrings::readAAStringSet(pep)
     names(pep_seqs) <- gsub(
       "^peptide:|^protein:", "",
@@ -614,7 +616,7 @@ hbr_load_reference <- function(genome,
              character(1)))
   }
   if (!is.null(genome_fasta)) {
-    cat("  Genome FASTA:", genome_fasta, "\n")
+    vcat("  Genome FASTA:", genome_fasta, "\n")
     genome_seqs <- Biostrings::readDNAStringSet(genome_fasta)
     names(genome_seqs) <- vapply(strsplit(names(genome_seqs), " "),
                                  function(x) x[1],
@@ -630,13 +632,12 @@ hbr_load_reference <- function(genome,
   } else {
     chromosomes <- gff_df[, .(Length_Approx = max(end, na.rm = TRUE)), by = Chr]
     chromosomes[, Length_Source := "gff3_max_feature"]
-    cat("  Note: no genome_fasta supplied -- chromosome lengths are ",
-        "approximated from the GFF3's\n",
-        "  own maximum feature coordinate per chromosome.\n", sep = "")
+    vcat("  Note: no genome_fasta supplied -- chromosome lengths are ",
+         "approximated from the GFF3's\n",
+         "  own maximum feature coordinate per chromosome.\n", sep = "")
   }
 
   # ---- Standardize chromosome names on every slot ----
-  # Applied here once, so the pipeline never needs a separate block.
   chromosomes$Chr  <- hbr_standardize_chr(chromosomes$Chr)
   genes$Chr        <- hbr_standardize_chr(genes$Chr)
   transcripts$Chr  <- hbr_standardize_chr(transcripts$Chr)
@@ -657,12 +658,12 @@ hbr_load_reference <- function(genome,
     has_genome_fasta = !is.null(genome_seqs))
   class(ref) <- c("hbr_reference", "list")
 
-  cat("  Genes:", nrow(genes), "| Transcripts:", nrow(transcripts),
-      "| CDS features:", if (!is.null(cds_dt)) nrow(cds_dt) else 0L,
-      "| UTR features:", if (!is.null(utr_dt)) nrow(utr_dt) else 0L, "\n")
+  vcat("  Genes:", nrow(genes), "| Transcripts:", nrow(transcripts),
+       "| CDS features:", if (!is.null(cds_dt)) nrow(cds_dt) else 0L,
+       "| UTR features:", if (!is.null(utr_dt)) nrow(utr_dt) else 0L, "\n")
 
-  ref$validation <- hbr_validate_sequence_resources(ref)
-  cat("  Sequence-resource QC:", ref$validation$status, "\n")
+  ref$validation <- hbr_validate_sequence_resources(ref, verbose = verbose)
+  vcat("  Sequence-resource QC:", ref$validation$status, "\n")
 
   ref
 }
@@ -1274,7 +1275,7 @@ hbr_read_osa1_r7_annotations <- function(
 #'     output_dir      = tempdir())
 #' }
 #' }
-#' @export
+#' @noRd
 hbr_superior_candidate_genes_functional_characterization <- function(
     candidate_genes,
     functional_annotation_file = NULL,

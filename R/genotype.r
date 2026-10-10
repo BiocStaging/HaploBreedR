@@ -1,16 +1,8 @@
 # ============================================================================
 # R/genotype.r
-# Genotype class, PLINK reading, normalization, reference validation,
-# strand harmonization, per-gene QC, and PLINK writing.
-#
-# Merged from: class-genotype.r, genotype-normalize.r, genotype-validate.r,
-#              genotype-qc.r, genotype-write.r
-#
-# Removed: hbr_read_genotype, .hbr_read_genotype_vcf,
-#          .hbr_read_genotype_hapmap, .hbr_read_genotype_csv,
-#          hbr_get_ld_genotype, hbr_get_haplotype_genotype
-# ============================================================================
-
+# Genotype class, PLINK reading (in-memory and BEDMatrix-streaming),
+# normalization, reference validation, strand harmonization, per-gene QC,
+# PLINK writing, and packing helpers.
 
 # ----------------------------------------------------------------------------
 # S3 print method
@@ -31,44 +23,147 @@
 #'        source_path    = NA_character_,
 #'        declared_build = NA_character_,
 #'        n_individuals  = 1L,
-#'        n_variants     = 1L),
+#'        n_variants     = 1L,
+#'        streaming      = FALSE),
 #'   class = "hbr_genotype")
 #' print(g)
 #'
 #' @export
 print.hbr_genotype <- function(x, ...) {
-  cat("<hbr_genotype>", x$source_format, "\n")
+  mode <- if (isTRUE(x$streaming)) "BEDMatrix (streaming)" else "in-memory"
+  cat("<hbr_genotype>", x$source_format, "|", mode, "\n")
   cat("  Individuals:", x$n_individuals,
       " Variants:", x$n_variants, "\n")
   if (!is.null(x$source_path))
     cat("  Source:", x$source_path, "\n")
-  if (!is.na(x$declared_build))
-    cat("  Declared build:", x$declared_build, "\n")
+  if (!is.null(x$row_keep) && length(x$row_keep) != x$n_individuals)
+    cat("  Kept rows:", length(x$row_keep), "\n")
+  if (length(x$swap_cols))
+    cat("  Strand-swapped columns:", length(x$swap_cols), "\n")
   invisible(x)
 }
 
 
 # ----------------------------------------------------------------------------
-# PLINK reader
+# Internal low-level helpers
 # ----------------------------------------------------------------------------
 
-#' Read PLINK files into an hbr_genotype
+#' Number of rows in an hbr_genotype's genotype storage
+#' @noRd
+.hbr_geno_nrow <- function(g) {
+  if (inherits(g, "hbr_genotype")) g$n_individuals else nrow(g)
+}
+
+#' Number of columns in an hbr_genotype's genotype storage
+#' @noRd
+.hbr_geno_ncol <- function(g) {
+  if (inherits(g, "hbr_genotype")) g$n_variants else ncol(g)
+}
+
+#' Row names of an hbr_genotype
+#' @noRd
+.hbr_geno_rownames <- function(g) {
+  if (inherits(g, "hbr_genotype")) g$row_names else rownames(g)
+}
+
+#' Column names of an hbr_genotype
+#' @noRd
+.hbr_geno_colnames <- function(g) {
+  if (inherits(g, "hbr_genotype")) g$col_names else colnames(g)
+}
+
+#' Pull a subset of genotype columns (and rows) as a numeric matrix
 #'
-#' Reads `.bim` and `.fam` metadata and the `.raw` genotype table.
-#' The `.raw` file is generated with PLINK `--recode A` if it is
-#' missing but the `.bed` file is present. Columns are read in chunks
-#' to bound peak memory. Uses a two-stage read of the `.raw` file to
-#' tolerate the small formatting quirks that occasionally trip
-#' `fread`'s auto-detection on Windows.
+#' Reads only the requested columns from the underlying storage (a
+#' BEDMatrix handle or a plain matrix), applies any strand-swap
+#' correction recorded in `g$swap_cols`, and subsets rows with
+#' `g$row_keep` (or the supplied `row_idx`).
+#'
+#' @param g An `hbr_genotype` or a plain numeric matrix.
+#' @param col_idx Integer vector of column indices.
+#' @param row_idx Optional integer vector of row indices.
+#'
+#' @return A numeric matrix with `NA` for missing calls.
+#'
+#' @noRd
+.hbr_pull_genotypes <- function(g, col_idx, row_idx = NULL) {
+
+  if (inherits(g, "hbr_genotype")) {
+    if (is.null(row_idx)) row_idx <- g$row_keep
+    swap_cols <- g$swap_cols
+    handle    <- g$genotypes
+  } else {
+    swap_cols <- integer(0)
+    handle    <- g
+  }
+
+  x <- handle[, col_idx, drop = FALSE]
+  storage.mode(x) <- "double"
+
+  # Apply 0<->2 flip on swapped columns
+  if (length(swap_cols)) {
+    flip <- which(col_idx %in% swap_cols)
+    for (j in flip) {
+      v <- x[, j]
+      v[v == 0L] <- -1L
+      v[v == 2L] <-  0L
+      v[v == -1L] <- 2L
+      x[, j] <- v
+    }
+  }
+
+  if (!is.null(row_idx) && length(row_idx) != nrow(x))
+    x <- x[row_idx, , drop = FALSE]
+  
+  if (inherits(g, "hbr_genotype")) {
+    rn <- g$individuals
+    if (length(rn) == nrow(x)) rownames(x) <- rn
+  } else if (!is.null(row_idx) && length(row_idx) == nrow(x)) {
+    rn <- rownames(g)
+    if (!is.null(rn)) rownames(x) <- rn[row_idx]
+  }
+  
+  x
+}
+
+#' Iterate over chunks of columns of an hbr_genotype
+#'
+#' Calls `FUN(chunk_matrix, start_col, end_col)` once per chunk of
+#' columns, with the swap correction applied. Used by the PLINK writer
+#' and the RDS packer.
+#'
+#' @noRd
+.hbr_iterate_chunks <- function(g, chunk_cols = 20000L, FUN) {
+  n_cols <- .hbr_geno_ncol(g)
+  out <- vector("list", ceiling(n_cols / chunk_cols))
+  k <- 0L
+  for (s in seq.int(1L, n_cols, by = chunk_cols)) {
+    e   <- min(n_cols, s + chunk_cols - 1L)
+    idx <- s:e
+    chunk <- .hbr_pull_genotypes(g, idx)
+    k <- k + 1L
+    out[[k]] <- FUN(chunk, s, e)
+  }
+  out[seq_len(k)]
+}
+
+
+# ----------------------------------------------------------------------------
+# PLINK readers
+# ----------------------------------------------------------------------------
+
+#' Read PLINK files into an hbr_genotype (in-memory, legacy path)
 #'
 #' @param prefix PLINK file prefix.
 #' @param plink_path Path to the PLINK executable.
+#' @param verbose Print progress.
 #'
-#' @return A list with `genotypes` (numeric matrix), `variants`
-#'   (data.table), `individuals` (character vector).
+#' @return A list with `genotypes`, `variants`, `individuals`.
 #'
 #' @noRd
-.hbr_read_genotype_plink <- function(prefix, plink_path) {
+.hbr_read_genotype_plink <- function(prefix, plink_path, verbose = TRUE) {
+
+  vcat <- function(...) if (isTRUE(verbose)) cat(...)
 
   bim_file <- paste0(prefix, ".bim")
   fam_file <- paste0(prefix, ".fam")
@@ -82,7 +177,7 @@ print.hbr_genotype <- function(x, ...) {
       stop(".raw not found and no .bed present to generate it from: ",
            prefix)
     }
-    cat("  .raw not found; generating via PLINK --recode A...\n")
+    vcat("  .raw not found; generating via PLINK --recode A...\n")
     .hbr_run_plink(plink_path,
                    c("--bfile", shQuote(prefix),
                      "--recode", "A", "--out", shQuote(prefix)))
@@ -90,7 +185,6 @@ print.hbr_genotype <- function(x, ...) {
       stop("PLINK reported success but .raw was not created: ", raw_file)
   }
 
-  # ---- Marker and sample metadata (small) ----
   bim <- data.table::fread(bim_file, header = FALSE)
   data.table::setnames(bim, c("CHR", "SNP", "CM", "BP", "A1", "A2"))
 
@@ -98,31 +192,19 @@ print.hbr_genotype <- function(x, ...) {
   data.table::setnames(fam, c("FID", "IID", "FATHER", "MOTHER",
                               "SEX", "PHENOTYPE"))
 
-  # ---- Read the .raw genotype table (two-stage for robustness) ----
-  cat("  Reading .raw file:", basename(raw_file), "...\n")
+  vcat("  Reading .raw file: ", basename(raw_file), "...\n")
 
   raw <- tryCatch(
     data.table::fread(
-      raw_file,
-      sep              = " ",
-      header           = TRUE,
-      fill             = TRUE,
-      strip.white      = TRUE,
-      blank.lines.skip = TRUE,
-      check.names      = FALSE),
+      raw_file, sep = " ", header = TRUE, fill = TRUE,
+      strip.white = TRUE, blank.lines.skip = TRUE, check.names = FALSE),
     error = function(e) NULL)
 
   if (is.null(raw) || nrow(raw) == 0L) {
-    cat("  fread failed or returned 0 rows; falling back to read.table...\n")
+    vcat("  fread failed or returned 0 rows; falling back to read.table...\n")
     raw <- data.table::as.data.table(
-      read.table(
-        raw_file,
-        header           = TRUE,
-        sep              = "",
-        comment.char     = "",
-        quote            = "",
-        stringsAsFactors = FALSE,
-        check.names      = FALSE))
+      read.table(raw_file, header = TRUE, sep = "", comment.char = "",
+                 quote = "", stringsAsFactors = FALSE, check.names = FALSE))
   }
 
   if (nrow(raw) == 0L)
@@ -135,16 +217,11 @@ print.hbr_genotype <- function(x, ...) {
   n_ind     <- nrow(raw)
   n_snp     <- length(geno_cols)
 
-  cat(sprintf("  Converting to matrix: %d individuals x %d SNPs ",
-              n_ind, n_snp))
-  cat(sprintf("(%.1f MB final)\n", n_ind * n_snp * 8 / 1e6))
+  vcat(sprintf("  Converting to matrix: %d individuals x %d SNPs (%.1f MB)\n",
+               n_ind, n_snp, n_ind * n_snp * 8 / 1e6))
 
-  # ---- Chunked conversion: fast and memory-bounded ----
   chunk_size <- 100000L
   n_chunks   <- ceiling(n_snp / chunk_size)
-
-  cat(sprintf("  Chunked conversion: %d chunk(s) of up to %d SNPs\n",
-              n_chunks, chunk_size))
 
   geno_mat <- matrix(NA_real_, nrow = n_ind, ncol = n_snp)
 
@@ -155,29 +232,117 @@ print.hbr_genotype <- function(x, ...) {
 
     sub_dt <- raw[, ..cols_chunk]
     geno_mat[, seq.int(start_col, end_col)] <- as.matrix(sub_dt)
-
-    rm(sub_dt)
-    invisible(gc(verbose = FALSE))
-
-    if (n_chunks > 1L)
-      cat(sprintf("    chunk %d / %d done (%d columns)\n",
-                  chunk, n_chunks, end_col - start_col + 1L))
+    rm(sub_dt); invisible(gc(verbose = FALSE))
   }
 
   rownames(geno_mat) <- ind_ids
   colnames(geno_mat) <- sub("_[^_]+$", "", geno_cols)
 
-  rm(raw)
-  invisible(gc(verbose = FALSE))
+  rm(raw); invisible(gc(verbose = FALSE))
 
   variants <- bim[match(colnames(geno_mat), SNP),
-                  .(SNP = as.character(SNP),
-                    CHR = as.character(CHR),
+                  .(SNP = as.character(SNP), CHR = as.character(CHR),
                     POS = as.numeric(BP),
-                    REF = as.character(A2),
-                    ALT = as.character(A1))]
+                    REF = as.character(A2), ALT = as.character(A1))]
 
   list(genotypes = geno_mat, variants = variants, individuals = ind_ids)
+}
+
+#' Open PLINK files as a streaming (BEDMatrix) hbr_genotype
+#'
+#' Returns an `hbr_genotype` object whose `$genotypes` slot is a
+#' `BEDMatrix::BEDMatrix` handle when the package is installed, or a
+#' fully-materialised numeric matrix otherwise. The object also carries
+#' the fields the pipeline needs downstream: `variants`, `individuals`,
+#' `swap_cols` (strand-swap column indices), `row_keep` (subset rows),
+#' `canonical_map` (canonical SNP name -> column index), `col_names`,
+#' `row_names`, and `streaming` flag.
+#'
+#' @param prefix PLINK file prefix.
+#' @param plink_path Path to the PLINK executable. Only used when
+#'   BEDMatrix is unavailable and the `.raw` file must be generated.
+#' @param verbose Print a one-line mode report.
+#'
+#' @return An `hbr_genotype` object.
+#'
+#' @noRd
+.hbr_open_genotype_plink <- function(prefix, plink_path = "plink",
+                                      verbose = TRUE) {
+
+  vcat <- function(...) if (isTRUE(verbose)) cat(...)
+
+  bim_file <- paste0(prefix, ".bim")
+  fam_file <- paste0(prefix, ".fam")
+  bed_file <- paste0(prefix, ".bed")
+
+  if (!file.exists(bim_file)) stop("PLINK .bim not found: ", bim_file)
+  if (!file.exists(fam_file)) stop("PLINK .fam not found: ", fam_file)
+  if (!file.exists(bed_file)) stop("PLINK .bed not found: ", bed_file)
+
+  bim <- data.table::fread(bim_file, header = FALSE)
+  data.table::setnames(bim, c("CHR", "SNP", "CM", "BP", "A1", "A2"))
+
+  fam <- data.table::fread(fam_file, header = FALSE)
+  data.table::setnames(fam, c("FID", "IID", "FATHER", "MOTHER",
+                              "SEX", "PHENOTYPE"))
+
+  inds <- as.character(fam$IID)
+  variants <- data.table::data.table(
+    SNP = as.character(bim$SNP),
+    CHR = as.character(bim$CHR),
+    POS = as.numeric(bim$BP),
+    REF = as.character(bim$A2),
+    ALT = as.character(bim$A1))
+
+  n_ind <- length(inds)
+  n_snp <- nrow(variants)
+
+  if (requireNamespace("BEDMatrix", quietly = TRUE)) {
+    vcat(sprintf("  Streaming: %d individuals x %d SNPs (BEDMatrix)\n",
+                 n_ind, n_snp))
+    handle <- suppressMessages(
+      BEDMatrix::BEDMatrix(prefix, simple_names = TRUE))
+
+    return(structure(list(
+      genotypes      = handle,
+      individuals    = inds,
+      variants       = variants,
+      n_individuals  = n_ind,
+      n_variants     = n_snp,
+      swap_cols      = integer(0),
+      row_keep       = seq_len(n_ind),
+      canonical_map  = NULL,
+      col_names      = as.character(bim$SNP),
+      row_names      = inds,
+      streaming      = TRUE,
+      source_format  = "PLINK",
+      source_path    = prefix,
+      declared_build = NA_character_,
+      report         = NULL),
+      class = c("hbr_genotype", "list")))
+  }
+
+  vcat(sprintf("  In-memory: %d individuals x %d SNPs (BEDMatrix not installed)\n",
+               n_ind, n_snp))
+  gm <- .hbr_read_genotype_plink(prefix, plink_path, verbose = FALSE)
+
+  structure(list(
+    genotypes      = gm$genotypes,
+    individuals    = gm$individuals,
+    variants       = variants,
+    n_individuals  = nrow(gm$genotypes),
+    n_variants     = ncol(gm$genotypes),
+    swap_cols      = integer(0),
+    row_keep       = seq_len(nrow(gm$genotypes)),
+    canonical_map  = NULL,
+    col_names      = colnames(gm$genotypes),
+    row_names      = rownames(gm$genotypes),
+    streaming      = FALSE,
+    source_format  = "PLINK",
+    source_path    = prefix,
+    declared_build = NA_character_,
+    report         = NULL),
+    class = c("hbr_genotype", "list"))
 }
 
 
@@ -187,29 +352,23 @@ print.hbr_genotype <- function(x, ...) {
 
 #' Normalize a genotype object's chromosome names, alleles, and variant keys
 #'
-#' Standardizes a `hbr_genotype` object so downstream matching against a
-#' reference is done by genomic coordinate, never by trusting that two
-#' files' SNP-ID or chromosome-naming conventions happen to agree.
-#' Strips `chr` / `chromosome` prefixes, collapses leading zeros in
-#' numeric chromosome names, uppercases REF/ALT, flags non-biallelic
-#' sites, builds a `CHR:POS:REF:ALT` variant key, and detects duplicate
-#' keys. A `report` element is attached describing what was changed.
-#'
 #' @param genotype A `hbr_genotype` object.
 #' @param reference Optional `hbr_reference` object.
+#' @param verbose Print the normalization summary.
 #'
 #' @return The input `hbr_genotype` with normalized `$variants` and an
 #'   added `$report` element.
 #'
 #' @noRd
-hbr_normalize_genotype <- function(genotype, reference = NULL) {
+hbr_normalize_genotype <- function(genotype, reference = NULL,
+                                    verbose = TRUE) {
 
   if (!inherits(genotype, "hbr_genotype"))
-    stop("hbr_normalize_genotype(): `genotype` must be a ",
-         "hbr_genotype object.", call. = FALSE)
+    stop("hbr_normalize_genotype(): `genotype` must be a hbr_genotype.",
+         call. = FALSE)
   if (!is.null(reference) && !inherits(reference, "hbr_reference")) {
-    stop("hbr_normalize_genotype(): `reference` must be a ",
-         "hbr_reference object or NULL.", call. = FALSE)
+    stop("hbr_normalize_genotype(): `reference` must be a hbr_reference ",
+         "object or NULL.", call. = FALSE)
   }
 
   v <- data.table::copy(genotype$variants)
@@ -254,11 +413,12 @@ hbr_normalize_genotype <- function(genotype, reference = NULL) {
     n_non_biallelic_snp      = n_non_biallelic,
     n_duplicate_variant_key  = n_duplicate)
 
-  cat("Normalized genotype variants: ",
-      n_chr_normalized, " chromosome name(s) changed, ",
-      length(unrecognized_chromosomes), " unrecognized, ",
-      n_non_biallelic, " non-biallelic-SNP allele(s) flagged, ",
-      n_duplicate, " duplicate coordinate(s)\n", sep = "")
+  if (isTRUE(verbose))
+    cat("Normalized genotype variants: ",
+        n_chr_normalized, " chromosome name(s) changed, ",
+        length(unrecognized_chromosomes), " unrecognized, ",
+        n_non_biallelic, " non-biallelic-SNP allele(s) flagged, ",
+        n_duplicate, " duplicate coordinate(s)\n", sep = "")
 
   genotype
 }
@@ -270,11 +430,6 @@ hbr_normalize_genotype <- function(genotype, reference = NULL) {
 
 #' Validate a genotype dataset's compatibility with a reference genome
 #'
-#' Checks chromosome-name overlap, position validity, biallelic-SNP
-#' fraction, duplicate positions, and REF-allele concordance against the
-#' reference. REF verification uses the reference genome FASTA when
-#' available, otherwise CDS overlaps.
-#'
 #' @param genotype A `hbr_genotype` object.
 #' @param reference A `hbr_reference` object.
 #' @param min_chr_match_frac Minimum fraction of variants whose
@@ -282,7 +437,7 @@ hbr_normalize_genotype <- function(genotype, reference = NULL) {
 #' @param min_ref_match_frac Minimum REF-allele match fraction.
 #' @param max_unknown_chr_frac Maximum tolerated fraction of unrecognized
 #'   chromosomes.
-#' @param verbose Print progress.
+#' @param verbose Print step-by-step progress.
 #'
 #' @return A list of class `hbr_compat_report`.
 #'
@@ -310,7 +465,8 @@ hbr_validate_genotype_reference <- function(genotype, reference,
     if (verbose)
       cat("    Genotype not pre-normalized; running ",
           "hbr_normalize_genotype()...\n", sep = "")
-    genotype <- hbr_normalize_genotype(genotype, reference)
+    genotype <- hbr_normalize_genotype(genotype, reference,
+                                        verbose = verbose)
   }
   t_step(t0, "normalize")
 
@@ -368,15 +524,12 @@ hbr_validate_genotype_reference <- function(genotype, reference,
     for (chr in chr_names_ok) {
       chr_seq <- reference$genome_seqs[[chr]]
       if (is.null(chr_seq)) next
-
       idx <- which(checkable$CHR == chr)
       pos       <- as.integer(round(checkable$POS[idx]))
       chr_chars <- as.character(chr_seq)
       chr_len_s <- nchar(chr_chars)
-
       ok <- !is.na(pos) & pos >= 1L & pos <= chr_len_s
       if (!any(ok)) { rm(chr_chars); next }
-
       ref_base[idx[ok]] <- substring(chr_chars, pos[ok], pos[ok])
       rm(chr_chars)
     }
@@ -393,12 +546,8 @@ hbr_validate_genotype_reference <- function(genotype, reference,
 
     if (n_ref_checked == 0L)
       warning("REF check ran but matched 0 variants. ",
-              "Chromosome names in reference$genome_seqs (",
-              paste(utils::head(names(reference$genome_seqs), 3),
-                    collapse = ","),
-              ") do not match genotype$variants$CHR (",
-              paste(utils::head(chrs_seen, 3), collapse = ","), ").",
-              call. = FALSE)
+              "Chromosome names in reference$genome_seqs do not match ",
+              "genotype$variants$CHR.", call. = FALSE)
     t_step(t0, sprintf("REF lookup (%d var)", nrow(checkable)))
 
   } else if (!is.null(reference$cds) && isTRUE(reference$has_cds)) {
@@ -407,7 +556,6 @@ hbr_validate_genotype_reference <- function(genotype, reference,
 
     if (nrow(cds_plus)) {
       t0 <- Sys.time()
-
       cds_dt <- cds_plus[, .(Chr = as.character(Chr),
                              cds_start = as.numeric(start),
                              cds_end = as.numeric(end),
@@ -433,15 +581,12 @@ hbr_validate_genotype_reference <- function(genotype, reference,
           for (tx in unique(hits$transcript_id)) {
             seq <- reference$cds_seqs[[tx]]
             if (is.null(seq)) next
-
             idx       <- which(hits$transcript_id == tx)
             pos       <- as.integer(round(hits$exon_offset[idx])) + 1L
             seq_chars <- as.character(seq)
             seq_len_s <- nchar(seq_chars)
-
             ok <- !is.na(pos) & pos >= 1L & pos <= seq_len_s
             if (!any(ok)) { rm(seq_chars); next }
-
             ref_base[idx[ok]] <- substring(seq_chars, pos[ok], pos[ok])
             rm(seq_chars)
           }
@@ -561,19 +706,15 @@ print.hbr_compat_report <- function(x, ...) {
 
 #' Classify REF/ALT mismatches against the reference genome
 #'
-#' For each variant, looks up the reference base at its position and
-#' labels the site as `match`, `strand_flip`, `allele_swap`,
-#' `flip_and_swap`, `ambiguous`, `no_ref`, or `unresolvable`.
-#'
 #' @param ref_alt A data.frame with `SNP`, `CHR`, `POS`, `REF`, `ALT`.
 #' @param reference A `hbr_reference` object with `genome_seqs`.
-#' @param verbose Print progress.
+#' @param verbose Print the per-class tally.
 #'
-#' @return A `data.table` copy of `ref_alt` with `REF_ref` and `class`
-#'   columns added.
+#' @return A `data.table` copy of `ref_alt` with `REF_ref` and `class`.
 #'
 #' @noRd
-.hbr_classify_ref_mismatches <- function(ref_alt, reference, verbose = TRUE) {
+.hbr_classify_ref_mismatches <- function(ref_alt, reference,
+                                          verbose = TRUE) {
 
   if (is.null(reference$genome_seqs))
     stop(".hbr_classify_ref_mismatches(): reference has no genome_seqs.")
@@ -591,14 +732,11 @@ print.hbr_compat_report <- function(x, ...) {
   for (chr in intersect(unique(dt$CHR), chr_names)) {
     idx <- which(dt$CHR == chr)
     if (!length(idx)) next
-
     seq_chars <- as.character(reference$genome_seqs[[chr]])
     seq_len   <- nchar(seq_chars)
     pos       <- as.integer(round(dt$POS[idx]))
-
     ok <- !is.na(pos) & pos >= 1L & pos <= seq_len
     if (!any(ok)) next
-
     dt$REF_ref[idx[ok]] <- toupper(substring(seq_chars, pos[ok], pos[ok]))
     rm(seq_chars)
   }
@@ -617,7 +755,7 @@ print.hbr_compat_report <- function(x, ...) {
     !is.na(comp[ALT]) & comp[ALT] == REF_ref & REF != ALT,       "flip_and_swap",
     default = "unresolvable")]
 
-  if (verbose) {
+  if (isTRUE(verbose)) {
     tab <- dt[, .N, by = class][order(-N)]
     tab[, pct := round(100 * N / sum(N), 2)]
     cat("    Strand classification:\n")
@@ -630,19 +768,23 @@ print.hbr_compat_report <- function(x, ...) {
   dt[]
 }
 
-#' Harmonize REF/ALT in a hbr_genotype object against the reference genome
+#' Harmonize REF/ALT in a hbr_genotype against the reference genome
 #'
-#' Uses [`.hbr_classify_ref_mismatches()`] to detect strand flips and
-#' allele swaps, applies the corresponding correction (including
-#' complementing genotype dosages on swaps), and optionally drops
-#' ambiguous A/T and C/G sites.
+#' Updates REF/ALT labels and records the indices of columns whose
+#' dosage should be flipped (0<->2) at read time in `genotype$swap_cols`.
+#' The underlying genotype matrix (or BEDMatrix handle) is never
+#' mutated, so peak memory is unchanged. When `drop_ambiguous = TRUE`
+#' on an in-memory genotype, the ambiguous columns are physically
+#' dropped; on a streaming genotype the call falls back to marking the
+#' columns as dropped via `genotype$drop_cols`.
 #'
 #' @param genotype A `hbr_genotype` object.
 #' @param reference A `hbr_reference` object with `genome_seqs`.
 #' @param drop_ambiguous Drop A/T and C/G variants after harmonization.
 #' @param verbose Print progress.
 #'
-#' @return The genotype object with harmonized variants.
+#' @return The genotype object with harmonized variants and updated
+#'   `swap_cols` / `drop_cols`.
 #'
 #' @noRd
 hbr_harmonize_strand <- function(genotype, reference,
@@ -670,17 +812,13 @@ hbr_harmonize_strand <- function(genotype, reference,
     tmp_ref <- genotype$variants$REF[idx_swap]
     genotype$variants$REF[idx_swap] <- genotype$variants$ALT[idx_swap]
     genotype$variants$ALT[idx_swap] <- tmp_ref
-
-    g <- genotype$genotypes[, idx_swap, drop = FALSE]
-    g[g == 0L]  <- -1L
-    g[g == 2L]  <-  0L
-    g[g == -1L] <-  2L
-    genotype$genotypes[, idx_swap] <- g
+    # Record for read-time flip; do NOT touch the matrix
+    genotype$swap_cols <- sort(unique(c(genotype$swap_cols, idx_swap)))
   }
 
   genotype$strand_report <- cls
 
-  if (verbose) {
+  if (isTRUE(verbose)) {
     cat(sprintf("    Corrections applied: %d flip, %d swap, %d flip+swap\n",
                 sum(cls$class == "strand_flip"),
                 sum(cls$class == "allele_swap"),
@@ -690,12 +828,30 @@ hbr_harmonize_strand <- function(genotype, reference,
   if (isTRUE(drop_ambiguous)) {
     idx_amb <- which(cls$class == "ambiguous")
     if (length(idx_amb)) {
-      if (verbose)
-        cat(sprintf("    Dropping %d ambiguous (A/T, C/G) variant(s)\n",
-                    length(idx_amb)))
-      genotype$genotypes  <- genotype$genotypes[, -idx_amb, drop = FALSE]
-      genotype$variants   <- genotype$variants[-idx_amb]
-      genotype$n_variants <- nrow(genotype$variants)
+      if (isTRUE(genotype$streaming)) {
+        warning("drop_ambiguous = TRUE with streaming genotype: ambiguous ",
+                "columns will be dropped logically (no matrix copy).",
+                call. = FALSE)
+        genotype$drop_cols <- sort(unique(c(genotype$drop_cols %||%
+                                              integer(0), idx_amb)))
+      } else {
+        genotype$genotypes  <- genotype$genotypes[, -idx_amb, drop = FALSE]
+        genotype$row_names  <- rownames(genotype$genotypes)
+        genotype$col_names  <- colnames(genotype$genotypes)
+        genotype$n_variants <- length(genotype$col_names)
+        # Reindex swap_cols
+        if (length(genotype$swap_cols)) {
+          keep_mask <- rep(TRUE, nrow(genotype$variants))
+          keep_mask[idx_amb] <- FALSE
+          old_to_new <- cumsum(keep_mask)
+          genotype$swap_cols <- old_to_new[genotype$swap_cols]
+          genotype$swap_cols <- genotype$swap_cols[
+            genotype$swap_cols > 0]
+        }
+      }
+      genotype$variants <- genotype$variants[-idx_amb]
+      if (!genotype$streaming)
+        genotype$n_variants <- nrow(genotype$variants)
     }
   }
 
@@ -709,43 +865,61 @@ hbr_harmonize_strand <- function(genotype, reference,
 
 #' Extract and filter a genotype sub-matrix for a gene's functional SNPs
 #'
-#' Given a `functional_snps` data.table and a genotype matrix, extracts
-#' the relevant columns and applies SNP-level and individual-level QC:
-#' missingness per SNP, MAF, monomorphic SNPs, heterozygote fraction per
-#' individual (with heterozygotes converted to `NA`), and missingness
-#' per individual.
+#' Given a `functional_snps` data.table and either a plain numeric
+#' matrix or an `hbr_genotype` streaming source, extracts the relevant
+#' columns and applies SNP-level and individual-level QC. In streaming
+#' mode only the gene's columns are ever read from disk.
 #'
 #' @param functional_snps A `data.table` with `SNP` and `Genomic_Order`.
-#' @param geno_mat Numeric genotype matrix (individuals × variants).
+#' @param geno_mat Either a numeric genotype matrix with canonical
+#'   column names, or an `hbr_genotype` source (streaming or in-memory).
 #' @param max_miss_snp Maximum per-SNP missingness.
 #' @param maf_min Minimum minor-allele frequency.
 #' @param max_het_ind Maximum per-individual heterozygote fraction.
 #' @param max_miss_ind Maximum per-individual missingness.
 #' @param min_individuals Minimum individuals after QC.
-#' @param gene_label Optional gene label for diagnostics.
+#' @param gene_label Optional gene label for QC-diagnostic prints.
+#' @param verbose Print the `[QC-diag]` filter diagnostics.
 #'
 #' @return A list with `geno`, `functional_snps`, `n_snps`,
-#'   `n_individuals`, and per-filter counts. Returns `NULL` when no SNPs
-#'   or individuals pass.
+#'   `n_individuals`, and per-filter counts.
 #'
 #' @noRd
 hbr_extract_genotypes <- function(functional_snps, geno_mat,
                                   max_miss_snp = 0.20, maf_min = 0.05,
                                   max_het_ind = 0.10, max_miss_ind = 0.10,
                                   min_individuals = 10,
-                                  gene_label = NULL) {
+                                  gene_label = NULL,
+                                  verbose = TRUE) {
 
   msg <- function(...)
-    if (!is.null(gene_label)) cat("    [QC-diag]", gene_label, ..., "\n")
+    if (isTRUE(verbose) && !is.null(gene_label))
+      cat("    [QC-diag]", gene_label, ..., "\n")
 
   snps <- functional_snps[order(Genomic_Order)]
-  col_idx <- which(colnames(geno_mat) %in% snps$SNP)
-  if (!length(col_idx)) {
-    msg("no SNP IDs found in genotype matrix"); return(NULL)
-  }
 
-  G <- geno_mat[, col_idx, drop = FALSE]
-  colnames(G) <- colnames(geno_mat)[col_idx]
+  if (inherits(geno_mat, "hbr_genotype")) {
+    gs <- geno_mat
+    if (is.null(gs$canonical_map))
+      stop("hbr_extract_genotypes(): hbr_genotype has no canonical_map. ",
+           "Did the pipeline canonicalize the genotype?",
+           call. = FALSE)
+    bed_cols <- gs$canonical_map[as.character(snps$SNP)]
+    ok <- !is.na(bed_cols)
+    if (!any(ok)) {
+      msg("no functional SNPs present in the canonical map"); return(NULL)
+    }
+    G <- .hbr_pull_genotypes(gs, unname(bed_cols[ok]))
+    colnames(G) <- as.character(snps$SNP[ok])
+    snps <- snps[ok]
+  } else {
+    col_idx <- which(colnames(geno_mat) %in% snps$SNP)
+    if (!length(col_idx)) {
+      msg("no SNP IDs found in genotype matrix"); return(NULL)
+    }
+    G <- geno_mat[, col_idx, drop = FALSE]
+    colnames(G) <- colnames(geno_mat)[col_idx]
+  }
 
   miss_snp  <- apply(G, 2, function(x) sum(is.na(x)) / length(x))
   n_rm_miss <- sum(miss_snp > max_miss_snp)
@@ -811,69 +985,85 @@ hbr_extract_genotypes <- function(functional_snps, geno_mat,
 
 #' Write a hbr_genotype object out as PLINK files
 #'
-#' Writes PED and MAP files from the in-memory dosage matrix and variant
-#' table, then converts to PLINK binary format (`--make-bed`) and to a
-#' `.raw` dosage file (`--recode A`). The intermediate PED and MAP files
+#' Writes PED and MAP files from the in-memory or streaming genotype,
+#' then converts to PLINK binary format (`--make-bed`) and to a `.raw`
+#' dosage file (`--recode A`). In streaming mode only one chunk of
+#' columns is materialised at a time. The intermediate PED and MAP files
 #' are removed after conversion.
 #'
 #' @param genotype A `hbr_genotype` object.
 #' @param out_prefix Output PLINK prefix.
 #' @param plink_path Path to the PLINK executable.
+#' @param verbose Print progress.
 #'
 #' @return `out_prefix`, invisibly.
 #'
 #' @noRd
-hbr_write_plink <- function(genotype, out_prefix, plink_path = "plink") {
+hbr_write_plink <- function(genotype, out_prefix, plink_path = "plink",
+                            verbose = TRUE) {
+
+  vcat <- function(...) if (isTRUE(verbose)) cat(...)
 
   if (!inherits(genotype, "hbr_genotype"))
     stop("hbr_write_plink(): `genotype` must be a hbr_genotype object.",
          call. = FALSE)
 
-  g   <- genotype$genotypes
+  ids <- genotype$row_names[genotype$row_keep]
   v   <- genotype$variants
-  ids <- genotype$individuals
 
-  if (nrow(g) != length(ids))
-    stop("hbr_write_plink(): matrix rows do not match individuals.",
-         call. = FALSE)
-  if (ncol(g) != nrow(v))
-    stop("hbr_write_plink(): matrix columns do not match variants.",
-         call. = FALSE)
+  # If drop_ambiguous was used in streaming mode, exclude dropped columns
+  keep_cols <- setdiff(seq_len(nrow(v)),
+                        genotype$drop_cols %||% integer(0))
+  v_kept <- v[keep_cols]
 
   ped_file <- paste0(out_prefix, ".ped")
   map_file <- paste0(out_prefix, ".map")
 
-  cat("Writing PLINK PED/MAP for", length(ids), "individuals x",
-      nrow(v), "variants...\n")
+  vcat("Writing PLINK PED/MAP for", length(ids), "individuals x",
+       nrow(v_kept), "variants...\n")
 
   map_dt <- data.table::data.table(
-    CHR = v$CHR, SNP = v$SNP, CM = 0,
-    POS = as.integer(round(v$POS)))
+    CHR = v_kept$CHR, SNP = v_kept$SNP, CM = 0,
+    POS = as.integer(round(v_kept$POS)))
   data.table::fwrite(map_dt, map_file, sep = "\t", col.names = FALSE)
 
-  ref <- v$REF; alt <- v$ALT; nr <- nrow(g); nc <- ncol(g)
+  # Open output file once
+  con <- file(ped_file, "w")
+  on.exit(try(close(con), silent = TRUE), add = TRUE)
 
-  ref_mat <- matrix(rep(ref, each = nr), nrow = nr, ncol = nc)
-  alt_mat <- matrix(rep(alt, each = nr), nrow = nr, ncol = nc)
+  chunk_cols <- 20000L
+  n_chunks   <- ceiling(length(keep_cols) / chunk_cols)
+  k <- 0L
+  for (s in seq.int(1L, length(keep_cols), by = chunk_cols)) {
+    e <- min(length(keep_cols), s + chunk_cols - 1L)
+    idx <- keep_cols[s:e]
+    k <- k + 1L
+    if (verbose && n_chunks > 1L)
+      cat(sprintf("  chunk %d / %d\n", k, n_chunks))
 
-  a1 <- ref_mat
-  a1[g == 2]    <- alt_mat[g == 2]
-  a1[is.na(g)]  <- "0"
+    g  <- .hbr_pull_genotypes(genotype, idx)
+    vc <- v[idx]
 
-  a2 <- ref_mat
-  a2[g == 1]    <- alt_mat[g == 1]
-  a2[g == 2]    <- alt_mat[g == 2]
-  a2[is.na(g)]  <- "0"
+    ref <- vc$REF; alt <- vc$ALT; nr <- nrow(g); nc <- ncol(g)
 
-  allele_pairs <- matrix(NA_character_, nrow = nr, ncol = 2L * nc)
-  allele_pairs[, seq(1L, 2L * nc, by = 2L)] <- a1
-  allele_pairs[, seq(2L, 2L * nc, by = 2L)] <- a2
-  ped_dt <- data.table::data.table(
-    FID = ids, IID = ids, PAT = 0, MAT = 0, SEX = 0, PHENOTYPE = -9)
-  ped_dt <- cbind(ped_dt, data.table::as.data.table(allele_pairs))
-  data.table::fwrite(ped_dt, ped_file, sep = " ", col.names = FALSE)
+    ref_mat <- matrix(rep(ref, each = nr), nrow = nr, ncol = nc)
+    alt_mat <- matrix(rep(alt, each = nr), nrow = nr, ncol = nc)
 
-  cat("Converting to PLINK binary format...\n")
+    a1 <- ref_mat; a1[g == 2]   <- alt_mat[g == 2]; a1[is.na(g)] <- "0"
+    a2 <- ref_mat; a2[g == 1]   <- alt_mat[g == 1]
+    a2[g == 2]   <- alt_mat[g == 2]; a2[is.na(g)] <- "0"
+
+    ap <- matrix(NA_character_, nrow = nr, ncol = 2L * nc)
+    ap[, seq(1L, 2L * nc, by = 2L)] <- a1
+    ap[, seq(2L, 2L * nc, by = 2L)] <- a2
+
+    lines <- paste(ids, ids, 0, 0, 0, -9,
+                   apply(ap, 1, paste, collapse = " "))
+    writeLines(lines, con)
+  }
+  close(con)
+
+  vcat("Converting to PLINK binary format...\n")
   .hbr_run_plink(plink_path,
                  c("--file", shQuote(out_prefix),
                    "--make-bed", "--out", shQuote(out_prefix)))
@@ -898,11 +1088,11 @@ hbr_write_plink <- function(genotype, out_prefix, plink_path = "plink") {
 # Subset in memory
 # ----------------------------------------------------------------------------
 
-#' Subset a hbr_genotype to phenotyped individuals (in memory)
+#' Subset a hbr_genotype to phenotyped individuals
 #'
-#' Matches the genotype's individual IDs to `phenotype_data` after ID
-#' cleaning and returns the reduced `hbr_genotype` together with the
-#' ID-match report. Stops when the overlap falls below the threshold.
+#' Computes the row index vector of phenotyped individuals and stores it
+#' in `genotype$row_keep`. In streaming mode no matrix is touched; in
+#' in-memory mode the matrix is physically subset (fast, one-off).
 #'
 #' @param genotype A `hbr_genotype` object.
 #' @param phenotype_data Data frame with an ID column.
@@ -910,7 +1100,7 @@ hbr_write_plink <- function(genotype, out_prefix, plink_path = "plink") {
 #' @param min_overlap_frac Minimum overlap; stops below.
 #' @param verbose Print progress.
 #'
-#' @return A list with `genotype` (subset) and `id_report`.
+#' @return A list with `genotype` and `id_report`.
 #'
 #' @noRd
 .hbr_subset_genotype <- function(genotype, phenotype_data,
@@ -926,19 +1116,26 @@ hbr_write_plink <- function(genotype, out_prefix, plink_path = "plink") {
          id_report$summary$Overlap_pct_of_phenotyped, "% matched).",
          call. = FALSE)
 
-  geno_ids_clean <- hbr_clean_id(genotype$individuals)
-  keep <- geno_ids_clean %in% id_report$matched_ids
-
-  if (!any(keep))
+  genotype$row_names   <- hbr_clean_id(genotype$row_names)
+  geno_ids_clean       <- genotype$row_names
+  
+  keep <- which(geno_ids_clean %in% id_report$matched_ids)
+  if (!length(keep))
     stop(".hbr_subset_genotype(): no individuals remain after matching.")
-
-  genotype$genotypes     <- genotype$genotypes[keep, , drop = FALSE]
-  genotype$individuals   <- genotype$individuals[keep]
-  genotype$n_individuals <- length(genotype$individuals)
+  
+  genotype$row_keep      <- keep
+  genotype$individuals   <- geno_ids_clean[keep]
+  genotype$n_individuals <- length(keep)
+  
+  if (!isTRUE(genotype$streaming)) {
+    genotype$genotypes <- genotype$genotypes[keep, , drop = FALSE]
+    
+    rownames(genotype$genotypes) <- genotype$row_names
+  }
 
   if (verbose)
     cat("Subset to", genotype$n_individuals,
-        "phenotyped individuals (in memory).\n")
+        "phenotyped individuals.\n")
 
   list(genotype = genotype, id_report = id_report)
 }

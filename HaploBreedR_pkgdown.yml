@@ -1,0 +1,98 @@
+url: https://github.com/aksruchi/HaploBreedR
+
+template:
+  bootstrap: 5
+  bootswatch: flatly
+  bslib:
+    primary: "#2C7FB8"
+    secondary: "#F0A830"
+
+navbar:
+  structure:
+    left:  [intro, reference, articles, news]
+    right: [search, github]
+  components:
+    github:
+      icon: fa-github
+      href: https://github.com/aksruchi/HaploBreedR
+
+home:
+  title: "High-Resolution Functional Haplotype Discovery and Genomic Selection"
+  description: |
+    An end-to-end quantitative genomics and molecular breeding suite 
+    for crops. Identifies superior functional haplotypes from coding 
+    variants under false discovery rate control and conducts haplotype-guided 
+    genomic selection, analytical cross usefulness prediction, and linkage-aware 
+    pyramiding optimization.
+  sidebar:
+    structure: [links, license, community, citation, authors, dev]
+
+reference:
+  - title: "Pipeline: Superior Haplotype Discovery"
+    desc: "End-to-end and modular tools for functional variant identification, intragenic haplotype assembly, and association testing."
+    contents:
+      - haplobreed_analysis
+      - hbr_check_inputs
+      - hbr_read_results
+      - hbr_regate
+      - hbr_build_haplotypes
+      - hbr_get_functional_variants
+  - title: "Genomic Selection & Breeding Decisions (HGSI)"
+    desc: "Two-kernel spectral REML prediction, cross usefulness, multi-locus pyramiding, and parent set optimization."
+    contents:
+      - hbr_fit_models
+      - hbr_cross_design
+      - hbr_advanced_decision
+      - hbr_cross_plan
+      - hbr_cross_usefulness
+      - hbr_haplotype_blocks
+      - hbr_haplotype_block_table 
+      - hbr_pyramid_probability
+      - hbr_population_size
+      - hbr_build_grm
+      - hbr_reml_two_kernel
+      - hbr_trait_conflicts
+  - title: "Publication Figures & Visualisation"
+    desc: "High-level ggplot2 publication graphics for candidate genes, haplotype networks, cross rankings, and model validation."
+    contents:
+      - hbr_plot_haplotype
+      - hbr_plot_haplotype_network
+      - hbr_plot_gene_structure
+      - hbr_plot_cross_ranking
+      - hbr_plot_cv_forest
+  - title: "Variant Annotation & Population Genetics"
+    desc: "LD decay estimation, GFF3 gene parsing, and genomic region interval intersection."
+    contents:
+      - hbr_calc_ld_decay
+      - hbr_annotate_regions
+      - hbr_read_gff3_genes
+  - title: "Functional Enrichment"
+    desc: "Hypergeometric Gene Ontology enrichment analysis."
+    contents:
+      - hbr_go_enrichment
+  - title: "Manuscript Tables & Reporting"
+    desc: "Formatted multi-sheet Excel manuscript tables and carrier extraction."
+    contents:
+      - hbr_build_manuscript_tables
+      - hbr_gene_carriers
+  - title: "Reference Data, Themes & Lookups"
+    desc: "Genetic linkage maps, crop genome metadata, and publication themes and palettes."
+    contents:
+      - hbr_rice_genetic_map
+      - hbr_crop_lookup
+      - hbr_palette
+      - hbr_palette_names
+      - hbr_theme
+      - hbr_theme_names
+
+articles:
+  - title: "Get started"
+    contents:
+      - HaploBreedR
+
+figures:
+  dev: "png"
+  dpi: 300
+
+development:
+  mode: release

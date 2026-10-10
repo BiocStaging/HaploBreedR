@@ -2,12 +2,6 @@
 # R/plot-functions.r
 # All user-facing plotting functions.
 #
-# Merged from: plot-haplotype.r, plot-gene-list.r, plot-gene-structure.r,
-#              plot-haplotype-network.r, plot-haplotype-table.r,
-#              plot-ld-heatmap.r, plot-superior.r
-# ============================================================================
-
-
 # ----------------------------------------------------------------------------
 # Per-gene boxplot + table (hbr_plot_haplotype)
 # ----------------------------------------------------------------------------
@@ -408,18 +402,7 @@ hbr_plot_haplotype <- function(
 #' @param verbose Print progress.
 #' @return Invisibly, a list with `plots`, `files`, `missing_genes`,
 #'   `combined_pdf`.
-#' @examples
-#' toy <- system.file("extdata", "toy", package = "HaploBreedR")
-#' hbr_plot_gene_list(
-#'   gene_list     = "gene1",
-#'   output_dir    = tempdir(),
-#'   per_gene_dir  = toy,
-#'   trait_col     = "trait_value",
-#'   formats       = "pdf",
-#'   combined_pdf  = FALSE,
-#'   verbose       = FALSE)
-#'
-#' @export
+#' @keywords internal
 hbr_plot_gene_list <- function(
     gene_list,
     output_dir   = NULL,
@@ -1037,7 +1020,7 @@ hbr_plot_haplotype_table <- function(
 #'   combined_pdf = FALSE,
 #'   verbose      = FALSE)
 #'
-#' @export
+#' @noRd
 hbr_plot_ld_heatmap <- function(
     gene_list,
     output_dir   = NULL,
@@ -1197,7 +1180,7 @@ hbr_plot_ld_heatmap <- function(
 #'   formats    = "pdf",
 #'   verbose    = FALSE)
 #'
-#' @export
+#' @noRd
 hbr_plot_superior_haplotype <- function(
     gene_id,
     output_dir,
@@ -1610,4 +1593,1022 @@ hbr_plot_superior_haplotype <- function(
   invisible(list(plot = fig, files = files,
                  lead = lead_info, ld_to_lead = ld_to_lead,
                  suggestive_threshold = suggestive_threshold))
+}
+
+#' Plot cross ranking by usefulness vs mid-parent index
+#'
+#' Visualises how the ranking of recommended crosses changes when progeny
+#' variance is accounted for. Each point is one cross; the x-axis is the
+#' rank by mid-parent index alone, the y-axis is the rank by usefulness
+#' (Schnell and Utz, 1975). Points on the diagonal are crosses whose
+#' recommendation is identical under the two criteria; points off the
+#' diagonal are crosses whose rank depends on progeny variance. The most
+#' displaced cross is optionally highlighted and labelled.
+#'
+#' Use this to document that the genetic map is doing real work in the
+#' cross-design step, or to justify why a cross with a lower mid-parent
+#' index is nonetheless recommended.
+#'
+#' @param x Either an `hgsi_advanced` object (from
+#'   [hbr_advanced_decision()]) or a data.frame with columns `parent_a`,
+#'   `parent_b`, `mid_index`, and `uc`.
+#' @param top_n Number of top crosses to display. Crosses are ordered by
+#'   `uc`. Default `20L`.
+#' @param highlight A cross to annotate. Either a length-2 character
+#'   vector `c(parent_a, parent_b)`, or `"auto"` to highlight the cross
+#'   with the largest absolute rank displacement (default).
+#' @param label_size Text size for the highlight label.
+#' @param palette One of [hbr_palette_names()].
+#' @param theme One of [hbr_theme_names()].
+#' @param output_dir Directory for the figure. `NULL` returns the plot
+#'   without writing anything.
+#' @param file_name Base name for the output file (without extension).
+#' @param width,height Figure dimensions in inches.
+#' @param formats Character vector of output formats. Any of `"pdf"`,
+#'   `"png"`, `"tiff"`, `"svg"`.
+#' @param verbose Print progress.
+#'
+#' @return Invisibly, a list with `plot` (the ggplot object) and `files`
+#'   (the paths written, or `character(0)` if `output_dir` is `NULL`).
+#'   The `plot` element can be assigned and modified further with
+#'   ggplot2.
+#'
+#' @examples
+#' toy <- system.file("extdata", "toy", package = "HaploBreedR")
+#' crosses <- data.frame(
+#'   parent_a  = sprintf("IRIS_%04d", 1:20),
+#'   parent_b  = sprintf("IRIS_%04d", 21:40),
+#'   mid_index = runif(20, 5, 12),
+#'   uc        = runif(20, 5, 15))
+#' hbr_plot_cross_ranking(crosses, top_n = 20)
+#'
+#' @export
+hbr_plot_cross_ranking <- function(
+    x,
+    top_n         = 20L,
+    highlight     = c("auto"),
+    label_size    = 3,
+    palette       = "haplobreed",
+    theme         = "haplobreed",
+    output_dir    = NULL,
+    file_name     = "cross_ranking",
+    width         = 6,
+    height        = 6,
+    formats       = c("pdf", "png"),
+    verbose       = TRUE) {
+  
+  .hbr_check_palette_theme(palette, theme)
+  
+  # ---- Resolve input -----------------------------------------------------
+  if (inherits(x, "hgsi_advanced")) {
+    cr <- data.table::as.data.table(x$crosses)
+  } else if (is.data.frame(x)) {
+    cr <- data.table::as.data.table(x)
+  } else {
+    stop("`x` must be an hgsi_advanced object or a data.frame of crosses.",
+         call. = FALSE)
+  }
+  required <- c("parent_a", "parent_b", "mid_index", "uc")
+  miss <- setdiff(required, names(cr))
+  if (length(miss))
+    stop("`x` is missing column(s): ", paste(miss, collapse = ", "),
+         call. = FALSE)
+  if (nrow(cr) < 2L)
+    stop("`x` must contain at least two crosses.", call. = FALSE)
+  
+  top_n <- as.integer(top_n)
+  if (is.na(top_n) || top_n < 2L)
+    stop("`top_n` must be an integer >= 2.", call. = FALSE)
+  top_n <- min(top_n, nrow(cr))
+  
+  # ---- Rank -------------------------------------------------------------
+  cr <- cr[!is.na(mid_index) & !is.na(uc)]
+  if (nrow(cr) < 2L)
+    stop("Not enough non-missing crosses to plot.", call. = FALSE)
+  
+  top <- cr[order(-uc)][seq_len(top_n)]
+  top[, rank_uc  := data.table::frank(-uc)]
+  top[, rank_mid := data.table::frank(-mid_index)]
+  top[, shift    := rank_uc - rank_mid]           # signed
+  top[, cross_id := paste(parent_a, parent_b, sep = " \u00d7 ")]
+  
+  # ---- Highlight --------------------------------------------------------
+  if (identical(highlight, "auto")) {
+    hi <- top[which.max(abs(shift))]
+  } else if (is.character(highlight) && length(highlight) == 2L) {
+    hi <- top[parent_a == highlight[1] & parent_b == highlight[2]]
+    if (!nrow(hi))
+      hi <- top[parent_a == highlight[2] & parent_b == highlight[1]]
+    if (!nrow(hi)) {
+      warning("Highlighted cross not found in the top ", top_n,
+              " crosses; skipping highlight.", call. = FALSE)
+      hi <- top[0]
+    }
+  } else {
+    hi <- top[0]
+  }
+  
+  # ---- Summary ----------------------------------------------------------
+  n_shifted <- sum(top$shift != 0L)
+  max_shift <- max(abs(top$shift))
+  if (verbose)
+    message(sprintf(
+      "  %d of %d top crosses reordered (max |shift| = %d)",
+      n_shifted, top_n, max_shift))
+  
+  # ---- Colours and theme -----------------------------------------------
+  pal    <- .hbr_palette_anchors(palette)
+  srf    <- .hbr_theme_surface(theme)
+  th     <- hbr_theme(theme, base_size = 11)
+  
+  accent      <- pal$superior
+  accent_dark <- pal$superior_dark
+  muted       <- srf$text_muted
+  txt_primary <- srf$text_primary
+  txt_second  <- srf$text_secondary
+  
+  # ---- Plot -------------------------------------------------------------
+  p <- ggplot2::ggplot(top,
+                       ggplot2::aes(x = rank_mid, y = rank_uc)) +
+    ggplot2::geom_abline(slope = 1, intercept = 0,
+                         linetype = "dashed", colour = muted,
+                         linewidth = 0.4) +
+    ggplot2::geom_point(size = 2.6, colour = accent, alpha = 0.85) +
+    ggplot2::geom_point(data = hi,
+                        ggplot2::aes(x = rank_mid, y = rank_uc),
+                        inherit.aes = FALSE,
+                        shape = 21, size = 4.5, stroke = 0.9,
+                        fill = NA, colour = accent_dark) +
+    ggplot2::scale_x_continuous(
+      breaks = pretty(c(1, top_n), n = 5),
+      limits = c(0.5, top_n + 0.5),
+      expand = c(0, 0)) +
+    ggplot2::scale_y_continuous(
+      breaks = pretty(c(1, top_n), n = 5),
+      limits = c(0.5, top_n + 0.5),
+      expand = c(0, 0)) +
+    ggplot2::labs(
+      x = "Rank by mid-parent index",
+      y = "Rank by usefulness (UC)",
+      title    = "Cross ranking under two criteria",
+      subtitle = sprintf(
+        "%d of %d top crosses reorder; max shift %d positions",
+        n_shifted, top_n, max_shift)) +
+    th +
+    ggplot2::theme(
+      panel.grid.minor   = ggplot2::element_blank(),
+      panel.grid.major   = ggplot2::element_line(colour = srf$grid_major,
+                                                 linewidth = 0.3),
+      plot.title         = ggplot2::element_text(
+        face = "bold", size = 12, hjust = 0,
+        colour = txt_primary, margin = ggplot2::margin(b = 2)),
+      plot.subtitle      = ggplot2::element_text(
+        size = 9, hjust = 0, colour = txt_second,
+        margin = ggplot2::margin(b = 6)),
+      axis.title         = ggplot2::element_text(
+        face = "bold", size = 10, colour = txt_primary),
+      axis.text          = ggplot2::element_text(
+        size = 9, colour = txt_primary),
+      plot.margin        = ggplot2::margin(8, 12, 8, 8))
+  
+  if (nrow(hi)) {
+    lbl <- sprintf("%s\n(mid rank %d, UC rank %d)",
+                   hi$cross_id, hi$rank_mid, hi$rank_uc)
+    p <- p + ggplot2::annotate(
+      "text",
+      x = hi$rank_mid, y = hi$rank_uc,
+      label = lbl,
+      hjust = -0.05, vjust = -0.6,
+      size = label_size,
+      colour = accent_dark,
+      fontface = "italic",
+      lineheight = 0.95)
+  }
+  
+  # ---- Save -------------------------------------------------------------
+  files <- character(0)
+  if (!is.null(output_dir)) {
+    if (!dir.exists(output_dir))
+      dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+    files <- .hbr_save_fig(p, file_name, "cross_ranking",
+                           output_dir, width, height, formats)
+    if (verbose && length(files))
+      message("  Figure(s) written: ",
+              paste(basename(files), collapse = ", "))
+  }
+  
+  invisible(list(plot = p, files = files))
+}
+
+#' Forest plot of cross-validation comparisons
+#'
+#' Displays the paired CV comparison of M2 vs M0, M3 vs M0 and M3 vs M2
+#' per trait, with bootstrap confidence intervals. Points whose interval
+#' excludes zero are coloured by the palette's superior colour; the rest
+#' are drawn in the muted text colour. Use this as the headline figure
+#' for the honest-vs-naive comparison.
+#'
+#' @param x An `hgsi_advanced` object or the `cv_compare` table.
+#' @param metric Metric to display. `"r"` by default.
+#' @param palette One of [hbr_palette_names()].
+#' @param theme One of [hbr_theme_names()].
+#' @param output_dir Directory for the figure. `NULL` returns the plot.
+#' @param file_name Base file name (without extension).
+#' @param width,height Figure dimensions in inches.
+#' @param formats Output formats.
+#' @param verbose Print progress.
+#'
+#' @return Invisibly, `list(plot = <ggplot>, files = <character>)`.
+#' @examples
+#' cmp <- data.frame(
+#'   trait     = rep(c("YLD", "DTF"), each = 3),
+#'   method    = rep(c("M2", "M3", "M3"), 2),
+#'   baseline  = rep(c("M0", "M0", "M2"), 2),
+#'   metric    = "r",
+#'   mean_diff = c(0.05, 0.02, 0.03, 0.04, 0.01, 0.03),
+#'   boot_lo   = c(0.01, -0.01, 0.00, 0.01, -0.02, 0.00),
+#'   boot_hi   = c(0.09, 0.05, 0.06, 0.07, 0.04, 0.06),
+#'   stringsAsFactors = FALSE)
+#' hbr_plot_cv_forest(cmp)
+#'
+#' @export
+hbr_plot_cv_forest <- function(
+    x,
+    metric      = "r",
+    palette     = "haplobreed",
+    theme       = "haplobreed",
+    output_dir  = NULL,
+    file_name   = "cv_forest",
+    width       = 8,
+    height      = NULL,
+    formats     = c("pdf", "png"),
+    verbose     = TRUE) {
+  
+  .hbr_check_palette_theme(palette, theme)
+  
+  if (inherits(x, "hgsi_advanced")) {
+    cmp <- data.table::as.data.table(x$cv_compare)
+  } else if (is.data.frame(x)) {
+    cmp <- data.table::as.data.table(x)
+  } else stop("`x` must be an hgsi_advanced object or a data.frame.",
+              call. = FALSE)
+  
+  required <- c("trait", "method", "baseline",
+                "mean_diff", "boot_lo", "boot_hi")
+  miss <- setdiff(required, names(cmp))
+  if (length(miss)) stop("`x` is missing column(s): ",
+                         paste(miss, collapse = ", "), call. = FALSE)
+  
+  if ("metric" %in% names(cmp) && !is.null(metric))
+    cmp <- cmp[cmp$metric == metric]
+  if (!nrow(cmp)) stop("No rows for metric '", metric, "'.", call. = FALSE)
+  
+  cmp[, cmp_order := data.table::fcase(
+    method == "M2" & baseline == "M0", 1L,
+    method == "M3" & baseline == "M0", 2L,
+    method == "M3" & baseline == "M2", 3L,
+    default = 99L)]
+  cmp[, comparison := paste0(method, " \u2212 ", baseline)]
+  data.table::setorder(cmp, trait, cmp_order)
+  cmp[, row_label := sprintf("%-8s  %s", trait, comparison)]
+  cmp[, row_label := factor(row_label, levels = rev(unique(row_label)))]
+  cmp[, sig := sign(boot_lo) == sign(boot_hi)]
+  
+  pal  <- .hbr_palette_anchors(palette)
+  srf  <- .hbr_theme_surface(theme)
+  th   <- hbr_theme(theme, base_size = 11)
+  
+  cmp[, col := ifelse(sig, pal$superior, srf$text_muted)]
+  
+  p <- ggplot2::ggplot(cmp,
+                       ggplot2::aes(x = mean_diff, y = row_label)) +
+    ggplot2::geom_vline(xintercept = 0, linetype = "dashed",
+                        colour = srf$text_muted, linewidth = 0.4) +
+    ggplot2::geom_errorbarh(
+      ggplot2::aes(xmin = boot_lo, xmax = boot_hi, colour = col),
+      height = 0.18, linewidth = 0.65) +
+    ggplot2::geom_point(ggplot2::aes(colour = col), size = 2.7) +
+    ggplot2::scale_colour_identity() +
+    ggplot2::labs(
+      x = sprintf("\u0394%s  (95%% bootstrap CI)", metric),
+      y = NULL,
+      title    = "Cross-validation: paired comparisons",
+      subtitle = sprintf(
+        "%d of %d comparisons have CIs excluding zero",
+        sum(cmp$sig), nrow(cmp))) +
+    th +
+    ggplot2::theme(
+      panel.grid.major.y = ggplot2::element_blank(),
+      panel.grid.minor   = ggplot2::element_blank(),
+      plot.title         = ggplot2::element_text(
+        face = "bold", size = 12, hjust = 0,
+        colour = srf$text_primary, margin = ggplot2::margin(b = 2)),
+      plot.subtitle      = ggplot2::element_text(
+        size = 9.5, hjust = 0, colour = srf$text_secondary,
+        margin = ggplot2::margin(b = 6)),
+      axis.text.y        = ggplot2::element_text(
+        family = "mono", size = 9, colour = srf$text_primary),
+      axis.title.x       = ggplot2::element_text(
+        face = "bold", size = 10, colour = srf$text_primary),
+      plot.margin        = ggplot2::margin(8, 14, 8, 6))
+  
+  files <- character(0)
+  if (!is.null(output_dir)) {
+    if (!dir.exists(output_dir))
+      dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+    h <- height %||% max(3, 0.34 * nrow(cmp) + 1.4)
+    files <- .hbr_save_fig(p, file_name, "cv_forest",
+                           output_dir, width, h, formats)
+    if (verbose && length(files))
+      message("  Figure(s): ", paste(basename(files), collapse = ", "))
+  }
+  invisible(list(plot = p, files = files))
+}
+
+#' Per-trait prediction quality
+#'
+#' For each trait, draws a scatter of observed vs predicted values. When
+#' `haplotype` is supplied for a trait, points are coloured by carrier
+#' status of the superior haplotype at the chosen gene (two colours); the
+#' panel subtitle reports the carrier mean difference. Otherwise points
+#' are coloured by individual reliability and a reliability histogram is
+#' drawn underneath.
+#'
+#' @param x An `hgsi_advanced` object.
+#' @param haplotype Optional named list. Each element is a list with
+#'   `gene`, optional `trait_dir`, and optional `superior_haplotype`,
+#'   used to colour the trait's panel by carrier status. Traits not
+#'   listed fall back to the reliability colouring.
+#' @param palette One of [hbr_palette_names()].
+#' @param theme One of [hbr_theme_names()].
+#' @param point_size,point_alpha Scatter styling.
+#' @param output_dir Directory for the figure.
+#' @param file_name Base file name.
+#' @param width,height Figure dimensions in inches.
+#' @param formats Output formats.
+#' @param verbose Print progress.
+#'
+#' @return Invisibly, `list(plot = <grob>, files = <character>)`.
+#'
+#' @noRd
+hbr_plot_prediction_quality <- function(
+    x,
+    haplotype    = NULL,
+    palette      = "haplobreed",
+    theme        = "haplobreed",
+    point_size   = 1.8,
+    point_alpha  = 0.85,
+    output_dir   = NULL,
+    file_name    = "prediction_quality",
+    width        = NULL,
+    height       = 5.5,
+    formats      = c("pdf", "png"),
+    verbose      = TRUE) {
+  
+  .hbr_check_palette_theme(palette, theme)
+  if (!inherits(x, "hgsi_advanced"))
+    stop("`x` must be an hgsi_advanced object.", call. = FALSE)
+  
+  traits <- x$traits
+  Tn     <- length(traits)
+  pal    <- .hbr_palette_anchors(palette)
+  srf    <- .hbr_theme_surface(theme)
+  th     <- hbr_theme(theme, base_size = 10)
+  accent <- pal$superior
+  muted  <- srf$text_muted
+  
+  # Resolve carrier vectors up front so a missing gene fails early.
+  carriers <- list()
+  if (!is.null(haplotype)) {
+    for (tr in names(haplotype)) {
+      if (!tr %in% traits) {
+        warning("haplotype entry '", tr, "' is not a trait in x; skipping.",
+                call. = FALSE)
+        next
+      }
+      spec <- haplotype[[tr]]
+      carriers[[tr]] <- hbr_gene_carriers(
+        x, trait = tr, gene = spec$gene,
+        trait_dir = spec$trait_dir %||% NULL,
+        superior_haplotype = spec$superior_haplotype %||% NULL)
+    }
+  }
+  
+  panels_sc <- list(); panels_h <- list()
+  for (tr in traits) {
+    fit <- x$fits[[tr]]
+    df  <- data.frame(obs  = x$pheno_mat[, tr],
+                      pred = fit$pred,
+                      rel  = fit$reliability)
+    df  <- df[!is.na(df$obs) & !is.na(df$pred), , drop = FALSE]
+    rv  <- if (nrow(df) >= 3) stats::cor(df$obs, df$pred) else NA_real_
+    
+    use_hap <- tr %in% names(carriers)
+    
+    if (use_hap) {
+      # Align carrier status to df rows
+      keep_idx <- !is.na(x$pheno_mat[, tr]) & !is.na(fit$pred)
+      df$carrier <- carriers[[tr]]$carrier[keep_idx]
+      sup_hap    <- carriers[[tr]]$superior_haplotype
+      gene       <- carriers[[tr]]$gene
+      n_car      <- sum(df$carrier, na.rm = TRUE)
+      mean_car   <- mean(df$obs[df$carrier],     na.rm = TRUE)
+      mean_non   <- mean(df$obs[!df$carrier],    na.rm = TRUE)
+      diff_mean  <- mean_car - mean_non
+      
+      # Two colours: muted for non-carrier, superior for carrier
+      fills <- c(`FALSE` = muted, `TRUE` = accent)
+      
+      p_sc <- ggplot2::ggplot(df,
+                              ggplot2::aes(x = pred, y = obs,
+                                           colour = carrier)) +
+        ggplot2::geom_abline(slope = 1, intercept = 0,
+                             linetype = "dashed", colour = muted,
+                             linewidth = 0.4) +
+        ggplot2::geom_point(size = point_size, alpha = point_alpha) +
+        ggplot2::scale_colour_manual(
+          values = fills, name = NULL,
+          labels = c(`FALSE` = "non-carrier", `TRUE` = "carrier")) +
+        ggplot2::labs(
+          x = "Predicted", y = "Observed",
+          title    = tr,
+          subtitle = sprintf(
+            "%s | %s n=%d | \u0394mean = %+.2f",
+            gene, sup_hap, n_car, diff_mean)) +
+        th +
+        ggplot2::theme(
+          plot.title    = ggplot2::element_text(
+            face = "bold", size = 10.5, hjust = 0,
+            colour = srf$text_primary, margin = ggplot2::margin(b = 1)),
+          plot.subtitle = ggplot2::element_text(
+            size = 7.8, hjust = 0, colour = srf$text_secondary,
+            margin = ggplot2::margin(b = 4)),
+          legend.position = c(0.02, 0.98),
+          legend.justification = c(0, 1),
+          legend.background = ggplot2::element_rect(
+            fill = "white", colour = NA),
+          legend.key = ggplot2::element_blank(),
+          legend.text  = ggplot2::element_text(size = 8),
+          legend.key.size = grid::unit(0.35, "cm"),
+          plot.margin = ggplot2::margin(4, 6, 4, 4))
+      
+    } else {
+      # Original reliability-coloured scatter
+      p_sc <- ggplot2::ggplot(df,
+                              ggplot2::aes(x = pred, y = obs)) +
+        ggplot2::geom_abline(slope = 1, intercept = 0,
+                             linetype = "dashed", colour = muted,
+                             linewidth = 0.4) +
+        ggplot2::geom_point(ggplot2::aes(colour = rel),
+                            size = point_size, alpha = point_alpha) +
+        ggplot2::scale_colour_gradientn(
+          colours = c("#F0F0F0", accent),
+          limits  = c(0, 1), name = "rel.") +
+        ggplot2::labs(
+          x = "Predicted", y = "Observed",
+          title    = tr,
+          subtitle = if (is.na(rv)) "" else sprintf("r = %.3f", rv)) +
+        th +
+        ggplot2::theme(
+          plot.title    = ggplot2::element_text(
+            face = "bold", size = 10.5, hjust = 0,
+            colour = srf$text_primary, margin = ggplot2::margin(b = 1)),
+          plot.subtitle = ggplot2::element_text(
+            size = 8.5, hjust = 0, colour = srf$text_secondary,
+            margin = ggplot2::margin(b = 4)),
+          legend.position = "right",
+          legend.key.height = grid::unit(0.8, "cm"),
+          legend.title  = ggplot2::element_text(size = 8),
+          legend.text   = ggplot2::element_text(size = 7.5),
+          plot.margin   = ggplot2::margin(4, 6, 4, 4))
+    }
+    
+    p_h <- ggplot2::ggplot(df, ggplot2::aes(x = rel)) +
+      ggplot2::geom_histogram(bins = 20, fill = accent,
+                              colour = "white", alpha = 0.85,
+                              linewidth = 0.2) +
+      ggplot2::labs(x = "Reliability", y = NULL) +
+      th +
+      ggplot2::theme(
+        axis.text  = ggplot2::element_text(size = 8),
+        axis.title = ggplot2::element_text(face = "bold", size = 9,
+                                           colour = srf$text_primary),
+        plot.margin = ggplot2::margin(2, 6, 4, 4))
+    
+    panels_sc[[tr]] <- p_sc
+    panels_h[[tr]]  <- p_h
+  }
+  
+  fig <- NULL
+  if (requireNamespace("patchwork", quietly = TRUE)) {
+    row_sc <- patchwork::wrap_plots(panels_sc, nrow = 1)
+    row_h  <- patchwork::wrap_plots(panels_h,  nrow = 1)
+    fig    <- patchwork::wrap_plots(row_sc, row_h,
+                                    ncol = 1, heights = c(1, 0.55))
+  } else {
+    fig <- gridExtra::arrangeGrob(
+      do.call(gridExtra::arrangeGrob,
+              c(lapply(panels_sc, ggplot2::ggplotGrob), list(nrow = 1))),
+      do.call(gridExtra::arrangeGrob,
+              c(lapply(panels_h,  ggplot2::ggplotGrob), list(nrow = 1))),
+      ncol = 1, heights = c(1, 0.55))
+  }
+  
+  files <- character(0)
+  if (!is.null(output_dir)) {
+    if (!dir.exists(output_dir))
+      dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+    w <- width %||% max(4, Tn * 3.2)
+    files <- .hbr_save_fig(fig, file_name, "prediction_quality",
+                           output_dir, w, height, formats)
+    if (verbose && length(files))
+      message("  Figure(s): ", paste(basename(files), collapse = ", "))
+  }
+  invisible(list(plot = fig, files = files))
+}
+#' Selected-set coverage against the full panel
+#'
+#' For each trait and for the multi-trait index, draws box plots of the
+#' genetic values (or index) split by membership in the simulated-
+#' annealing-selected parent set. Shows whether the selected parents are
+#' at the top of each trait and of the index, and by how much the index
+#' separates them from the rest of the panel.
+#'
+#' @param x An `hgsi_advanced` object.
+#' @param palette One of [hbr_palette_names()].
+#' @param theme One of [hbr_theme_names()].
+#' @param show_points Overlay individual values as jittered points.
+#' @param point_alpha Alpha for the jittered points.
+#' @param output_dir Directory for the figure. `NULL` returns the plot.
+#' @param file_name Base file name.
+#' @param width,height Figure dimensions in inches.
+#' @param formats Output formats.
+#' @param verbose Print progress.
+#'
+#' @return Invisibly, `list(plot = <ggplot>, files = <character>)`.
+#'
+#' @noRd
+hbr_plot_selected_set_coverage <- function(
+    x,
+    palette       = "haplobreed",
+    theme         = "haplobreed",
+    show_points   = TRUE,
+    point_alpha   = 0.35,
+    output_dir    = NULL,
+    file_name     = "selected_set_coverage",
+    width         = 8,
+    height        = 4,
+    formats       = c("pdf", "png"),
+    verbose       = TRUE) {
+  
+  .hbr_check_palette_theme(palette, theme)
+  
+  if (!inherits(x, "hgsi_advanced"))
+    stop("`x` must be an hgsi_advanced object.", call. = FALSE)
+  if (is.null(x$selected_set))
+    stop("`x` has no selected_set; rerun with run_set_selection = TRUE.",
+         call. = FALSE)
+  
+  sel_ids <- x$selected_set$ids
+  if (!length(sel_ids))
+    stop("The selected set is empty.", call. = FALSE)
+  
+  # Build long table: one row per (panel, individual)
+  parts <- list()
+  for (tr in x$traits) {
+    parts[[length(parts) + 1L]] <- data.table::data.table(
+      panel    = tr,
+      id       = x$ids,
+      value    = x$fits[[tr]]$g,
+      selected = x$ids %in% sel_ids)
+  }
+  parts[[length(parts) + 1L]] <- data.table::data.table(
+    panel    = "Index",
+    id       = x$ids,
+    value    = x$index,
+    selected = x$ids %in% sel_ids)
+  dt <- data.table::rbindlist(parts, use.names = TRUE)
+  
+  # Panel order: Index first, then traits
+  dt[, panel := factor(panel, levels = c("Index", x$traits))]
+  
+  pal <- .hbr_palette_anchors(palette)
+  srf <- .hbr_theme_surface(theme)
+  th  <- hbr_theme(theme, base_size = 11)
+  fills <- c(`FALSE` = srf$text_muted, `TRUE` = pal$superior)
+  
+  p <- ggplot2::ggplot(dt,
+                       ggplot2::aes(x = selected, y = value,
+                                    fill = selected)) +
+    ggplot2::geom_boxplot(width = 0.55, outlier.shape = NA,
+                          colour = srf$text_primary,
+                          linewidth = 0.5, alpha = 0.75)
+  
+  if (isTRUE(show_points))
+    p <- p + ggplot2::geom_jitter(width = 0.14, size = 0.9,
+                                  alpha = point_alpha,
+                                  colour = srf$text_primary)
+  
+  p <- p +
+    ggplot2::facet_wrap(~ panel, scales = "free_y", nrow = 1) +
+    ggplot2::scale_fill_manual(values = fills, guide = "none") +
+    ggplot2::scale_x_discrete(labels = c(`FALSE` = "Panel",
+                                         `TRUE`  = "Selected")) +
+    ggplot2::labs(
+      x = NULL, y = "Genetic value",
+      title    = "Selected parents vs the panel",
+      subtitle = sprintf(
+        "%d selected parents; mean relatedness %.3f; coverage %.2f",
+        length(sel_ids), x$selected_set$mean_relatedness,
+        x$selected_set$coverage)) +
+    th +
+    ggplot2::theme(
+      panel.grid.major.x = ggplot2::element_blank(),
+      panel.grid.minor   = ggplot2::element_blank(),
+      plot.title         = ggplot2::element_text(
+        face = "bold", size = 12, hjust = 0,
+        colour = srf$text_primary, margin = ggplot2::margin(b = 2)),
+      plot.subtitle      = ggplot2::element_text(
+        size = 9, hjust = 0, colour = srf$text_secondary,
+        margin = ggplot2::margin(b = 6)),
+      axis.title.y       = ggplot2::element_text(
+        face = "bold", size = 10, colour = srf$text_primary),
+      strip.text         = ggplot2::element_text(face = "bold", size = 10),
+      plot.margin        = ggplot2::margin(8, 12, 8, 8))
+  
+  files <- character(0)
+  if (!is.null(output_dir)) {
+    if (!dir.exists(output_dir))
+      dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+    w <- width %||% max(6, length(unique(dt$panel)) * 1.8)
+    files <- .hbr_save_fig(p, file_name, "selected_set_coverage",
+                           output_dir, w, height, formats)
+    if (verbose && length(files))
+      message("  Figure(s): ", paste(basename(files), collapse = ", "))
+  }
+  invisible(list(plot = p, files = files))
+}
+
+#' Per-trait GEBV profile of the top ranked parents
+#'
+#' Draws a heatmap of the top ranked parents across the traits. Each
+#' trait's GEBV is sign-flipped so that "higher is always better", then
+#' scaled by its own maximum absolute value, so the cells are comparable
+#' across traits on the same colour scale. The trait column order is
+#' preserved; the parent rows are ordered by the multi-trait index.
+#'
+#' @param x An `hgsi_advanced` object.
+#' @param top_n Number of top parents to display. Default `25L`.
+#' @param show_values Print the numeric scaled value inside each cell.
+#' @param palette One of [hbr_palette_names()].
+#' @param theme One of [hbr_theme_names()].
+#' @param output_dir Directory for the figure. `NULL` returns the plot.
+#' @param file_name Base file name.
+#' @param width,height Figure dimensions in inches.
+#' @param formats Output formats.
+#' @param verbose Print progress.
+#'
+#' @return Invisibly, `list(plot = <ggplot>, files = <character>)`.
+#'
+#' @noRd
+hbr_plot_parent_profile <- function(
+    x,
+    top_n       = 25L,
+    show_values = FALSE,
+    palette     = "haplobreed",
+    theme       = "haplobreed",
+    output_dir  = NULL,
+    file_name   = "parent_profile",
+    width       = 7,
+    height      = NULL,
+    formats     = c("pdf", "png"),
+    verbose     = TRUE) {
+  
+  .hbr_check_palette_theme(palette, theme)
+  
+  if (!inherits(x, "hgsi_advanced"))
+    stop("`x` must be an hgsi_advanced object.", call. = FALSE)
+  
+  traits <- x$traits
+  top_n  <- min(as.integer(top_n), nrow(x$parents))
+  par    <- x$parents[seq_len(top_n)]
+  
+  # Matrix: parents x traits, with direction applied
+  mat <- as.matrix(par[, paste0(traits, "_gebv"), with = FALSE])
+  colnames(mat) <- traits
+  for (tr in traits) {
+    if (identical(x$directions[[tr]], "lower"))
+      mat[, tr] <- -mat[, tr]
+    mx <- max(abs(mat[, tr]), na.rm = TRUE)
+    if (is.finite(mx) && mx > 0) mat[, tr] <- mat[, tr] / mx
+  }
+  rownames(mat) <- par$id
+  
+  long <- data.table::data.table(
+    parent = factor(rep(rownames(mat), times = length(traits)),
+                    levels = rev(rownames(mat))),
+    trait  = factor(rep(colnames(mat), each = nrow(mat)),
+                    levels = traits),
+    value  = as.vector(mat))
+  
+  pal <- .hbr_palette_anchors(palette)
+  srf <- .hbr_theme_surface(theme)
+  th  <- hbr_theme(theme, base_size = 10)
+  
+  p <- ggplot2::ggplot(long,
+                       ggplot2::aes(x = trait, y = parent, fill = value)) +
+    ggplot2::geom_tile(colour = "white", linewidth = 0.5) +
+    ggplot2::scale_fill_gradient2(
+      low      = srf$text_muted,
+      mid      = "white",
+      high     = pal$superior,
+      midpoint = 0, limits = c(-1, 1),
+      name     = "GEBV\n(scaled)") +
+    ggplot2::labs(
+      x = NULL, y = NULL,
+      title    = "Trait GEBV profile of the top parents",
+      subtitle = "Direction applied so higher is always better; scaled per trait") +
+    th +
+    ggplot2::theme(
+      panel.grid   = ggplot2::element_blank(),
+      axis.ticks   = ggplot2::element_blank(),
+      axis.text.y  = ggplot2::element_text(size = 8.5,
+                                           colour = srf$text_primary),
+      axis.text.x  = ggplot2::element_text(size = 10, face = "bold",
+                                           colour = srf$text_primary),
+      plot.title   = ggplot2::element_text(
+        face = "bold", size = 12, hjust = 0,
+        colour = srf$text_primary, margin = ggplot2::margin(b = 2)),
+      plot.subtitle = ggplot2::element_text(
+        size = 9, hjust = 0, colour = srf$text_secondary,
+        margin = ggplot2::margin(b = 6)),
+      legend.position = "right",
+      legend.key.height = grid::unit(1.3, "cm"),
+      legend.key.width  = grid::unit(0.4, "cm"),
+      plot.margin = ggplot2::margin(8, 8, 8, 8))
+  
+  if (isTRUE(show_values))
+    p <- p + ggplot2::geom_text(
+      ggplot2::aes(label = sprintf("%.2f", value)),
+      size = 2.4, colour = srf$text_primary)
+  
+  files <- character(0)
+  if (!is.null(output_dir)) {
+    if (!dir.exists(output_dir))
+      dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+    h <- height %||% max(4, 0.24 * top_n + 1.6)
+    files <- .hbr_save_fig(p, file_name, "parent_profile",
+                           output_dir, width, h, formats)
+    if (verbose && length(files))
+      message("  Figure(s): ", paste(basename(files), collapse = ", "))
+  }
+  invisible(list(plot = p, files = files))
+}
+
+#' Cross recommendation landscape
+#'
+#' Draws a symmetric grid of the recommended crosses: the top ranked
+#' parents on both axes, with a filled cell where the two parents appear
+#' together in the crosses table. Cell colour is usefulness; the two
+#' axes are ordered by the multi-trait index. Cells that do not appear in
+#' the crosses table are left blank, so the plot shows the sparse
+#' structure of the recommended pairs.
+#'
+#' @param x An `hgsi_advanced` object or a list with elements `crosses`
+#'   (data.frame with columns `parent_a`, `parent_b`, `uc`) and
+#'   `parents` (data.frame with columns `id`, `rank`).
+#' @param top_n Number of parents shown on each axis. Default `12L`.
+#' @param palette One of [hbr_palette_names()].
+#' @param theme One of [hbr_theme_names()].
+#' @param output_dir Directory for the figure. `NULL` returns the plot.
+#' @param file_name Base file name.
+#' @param width,height Figure dimensions in inches.
+#' @param formats Output formats.
+#' @param verbose Print progress.
+#'
+#' @return Invisibly, `list(plot = <ggplot>, files = <character>)`.
+#'
+#' @noRd
+hbr_plot_cross_landscape <- function(
+    x,
+    top_n      = 12L,
+    palette    = "haplobreed",
+    theme      = "haplobreed",
+    output_dir = NULL,
+    file_name  = "cross_landscape",
+    width      = 7,
+    height     = 7,
+    formats    = c("pdf", "png"),
+    verbose    = TRUE) {
+  
+  .hbr_check_palette_theme(palette, theme)
+  
+  if (inherits(x, "hgsi_advanced")) {
+    cr <- data.table::as.data.table(x$crosses)
+    par <- data.table::as.data.table(x$parents)
+  } else if (is.list(x) && all(c("crosses", "parents") %in% names(x))) {
+    cr  <- data.table::as.data.table(x$crosses)
+    par <- data.table::as.data.table(x$parents)
+  } else {
+    stop("`x` must be an hgsi_advanced object or a list with ",
+         "`crosses` and `parents`.", call. = FALSE)
+  }
+  
+  required_cr <- c("parent_a", "parent_b", "uc")
+  miss <- setdiff(required_cr, names(cr))
+  if (length(miss)) stop("crosses missing column(s): ",
+                         paste(miss, collapse = ", "), call. = FALSE)
+  if (!all(c("id", "rank") %in% names(par)))
+    stop("parents must have columns `id` and `rank`.", call. = FALSE)
+  
+  # Restrict to top_n parents by rank
+  top_par <- par[order(rank)][seq_len(min(as.integer(top_n), nrow(par)))]
+  top_ids <- as.character(top_par$id)
+  
+  cr <- cr[parent_a %in% top_ids & parent_b %in% top_ids]
+  if (!nrow(cr))
+    stop("No recommended crosses between the top ", top_n,
+         " parents.", call. = FALSE)
+  
+  # Symmetric long table
+  m1 <- data.table::data.table(pa = cr$parent_a, pb = cr$parent_b,
+                               uc = cr$uc)
+  m2 <- data.table::data.table(pa = cr$parent_b, pb = cr$parent_a,
+                               uc = cr$uc)
+  mm <- data.table::rbindlist(list(m1, m2))
+  
+  ranks <- stats::setNames(top_par$rank, top_par$id)
+  mm[, x := match(pa, top_ids)]
+  mm[, y := match(pb, top_ids)]
+  
+  # Position labels with rank
+  labs <- sprintf("%s\n(#%d)", top_ids, ranks[top_ids])
+  names(labs) <- top_ids
+  
+  pal <- .hbr_palette_anchors(palette)
+  srf <- .hbr_theme_surface(theme)
+  th  <- hbr_theme(theme, base_size = 10)
+  
+  # Sequential gradient: muted -> superior
+  grad <- grDevices::colorRampPalette(c("#F5F5F5", pal$superior))(100)
+  
+  p <- ggplot2::ggplot(mm,
+                       ggplot2::aes(x = x, y = y, fill = uc)) +
+    ggplot2::geom_tile(colour = "white", linewidth = 0.6) +
+    ggplot2::geom_text(ggplot2::aes(label = sprintf("%.1f", uc)),
+                       size = 2.6, colour = srf$text_primary) +
+    ggplot2::scale_fill_gradientn(
+      colours = grad, name = "UC",
+      limits  = c(min(mm$uc), max(mm$uc))) +
+    ggplot2::scale_x_continuous(breaks = seq_along(top_ids),
+                                labels = labs[top_ids],
+                                expand = c(0, 0)) +
+    ggplot2::scale_y_reverse(breaks = seq_along(top_ids),
+                             labels = labs[top_ids],
+                             expand = c(0, 0)) +
+    ggplot2::coord_fixed() +
+    ggplot2::labs(
+      x = NULL, y = NULL,
+      title    = "Cross recommendation landscape",
+      subtitle = sprintf(
+        "Top %d crosses between the %d highest-ranked parents; cell = UC",
+        nrow(cr), length(top_ids))) +
+    th +
+    ggplot2::theme(
+      panel.grid   = ggplot2::element_blank(),
+      axis.ticks   = ggplot2::element_blank(),
+      axis.text.x  = ggplot2::element_text(size = 7.5, angle = 45,
+                                           hjust = 1,
+                                           colour = srf$text_primary),
+      axis.text.y  = ggplot2::element_text(size = 7.5,
+                                           colour = srf$text_primary),
+      plot.title   = ggplot2::element_text(
+        face = "bold", size = 12, hjust = 0,
+        colour = srf$text_primary, margin = ggplot2::margin(b = 2)),
+      plot.subtitle = ggplot2::element_text(
+        size = 9, hjust = 0, colour = srf$text_secondary,
+        margin = ggplot2::margin(b = 6)),
+      legend.position = "right",
+      legend.key.height = grid::unit(1.4, "cm"),
+      plot.margin = ggplot2::margin(8, 12, 8, 8))
+  
+  files <- character(0)
+  if (!is.null(output_dir)) {
+    if (!dir.exists(output_dir))
+      dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+    files <- .hbr_save_fig(p, file_name, "cross_landscape",
+                           output_dir, width, height, formats)
+    if (verbose && length(files))
+      message("  Figure(s): ", paste(basename(files), collapse = ", "))
+  }
+  invisible(list(plot = p, files = files))
+}
+
+#' Optimism absorbed by full-data feature discovery
+#'
+#' For each trait, draws three bars: the naive improvement (M2 vs M0),
+#' the honest improvement (M3 vs M0), and the optimism (M2 vs M3) that
+#' the naive number absorbed. The height of the optimism bar is what the
+#' M0/M2/M3 design was built to expose.
+#'
+#' @inheritParams hbr_plot_cv_forest
+#' @param bar_alpha Alpha for the bars.
+#' @param legend_position Legend position.
+#'
+#' @return Invisibly, `list(plot = <ggplot>, files = <character>)`.
+#'
+#' @noRd
+hbr_plot_cv_optimism <- function(
+    x,
+    palette          = "haplobreed",
+    theme            = "haplobreed",
+    bar_alpha        = 0.9,
+    legend_position  = "top",
+    output_dir       = NULL,
+    file_name        = "cv_optimism",
+    width            = 7,
+    height           = 4,
+    formats          = c("pdf", "png"),
+    verbose          = TRUE) {
+  
+  .hbr_check_palette_theme(palette, theme)
+  
+  if (inherits(x, "hgsi_advanced")) {
+    cmp <- data.table::as.data.table(x$cv_compare)
+  } else if (is.data.frame(x)) {
+    cmp <- data.table::as.data.table(x)
+  } else stop("`x` must be an hgsi_advanced object or a data.frame.",
+              call. = FALSE)
+  
+  required <- c("trait", "method", "baseline", "mean_diff")
+  miss <- setdiff(required, names(cmp))
+  if (length(miss)) stop("`x` is missing column(s): ",
+                         paste(miss, collapse = ", "), call. = FALSE)
+  
+  naive   <- cmp[method == "M2" & baseline == "M0",
+                 .(trait, naive = mean_diff)]
+  honest  <- cmp[method == "M3" & baseline == "M0",
+                 .(trait, honest = mean_diff)]
+  optim   <- cmp[method == "M2" & baseline == "M3",
+                 .(trait, optimism = mean_diff)]
+  dt      <- Reduce(function(a, b) merge(a, b, by = "trait"),
+                    list(naive, honest, optim))
+  
+  long <- data.table::melt(
+    dt, id.vars = "trait",
+    measure.vars = c("naive", "honest", "optimism"),
+    variable.name = "kind", value.name = "gain")
+  long[, kind := factor(kind,
+                        levels = c("naive", "honest", "optimism"),
+                        labels = c("Naive  (M2 \u2212 M0)",
+                                   "Honest (M3 \u2212 M0)",
+                                   "Optimism  (M2 \u2212 M3)"))]
+  
+  pal <- .hbr_palette_anchors(palette)
+  srf <- .hbr_theme_surface(theme)
+  th  <- hbr_theme(theme, base_size = 11)
+  
+  bar_cols <- stats::setNames(
+    c(srf$text_muted, pal$superior, pal$other_dark),
+    levels(long$kind))
+  
+  p <- ggplot2::ggplot(long,
+                       ggplot2::aes(x = trait, y = gain, fill = kind)) +
+    ggplot2::geom_hline(yintercept = 0, colour = srf$text_muted,
+                        linewidth = 0.4) +
+    ggplot2::geom_col(position = ggplot2::position_dodge(width = 0.82),
+                      width = 0.72, alpha = bar_alpha) +
+    ggplot2::scale_fill_manual(values = bar_cols, name = NULL) +
+    ggplot2::labs(
+      x = NULL,
+      y = expression(Delta * r),
+      title    = "Honest improvement vs absorbed optimism",
+      subtitle = "Optimism = what the naive (M2) accuracy would have overstated") +
+    th +
+    ggplot2::theme(
+      panel.grid.major.x = ggplot2::element_blank(),
+      panel.grid.minor   = ggplot2::element_blank(),
+      plot.title         = ggplot2::element_text(
+        face = "bold", size = 12, hjust = 0,
+        colour = srf$text_primary, margin = ggplot2::margin(b = 2)),
+      plot.subtitle      = ggplot2::element_text(
+        size = 9.5, hjust = 0, colour = srf$text_secondary,
+        margin = ggplot2::margin(b = 6)),
+      legend.position    = legend_position,
+      legend.text        = ggplot2::element_text(size = 9),
+      legend.key.size    = grid::unit(0.4, "cm"),
+      axis.title.y       = ggplot2::element_text(
+        face = "bold", size = 10, colour = srf$text_primary),
+      plot.margin        = ggplot2::margin(8, 12, 8, 8))
+  
+  files <- character(0)
+  if (!is.null(output_dir)) {
+    if (!dir.exists(output_dir))
+      dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+    files <- .hbr_save_fig(p, file_name, "cv_optimism",
+                           output_dir, width, height, formats)
+    if (verbose && length(files))
+      message("  Figure(s): ", paste(basename(files), collapse = ", "))
+  }
+  invisible(list(plot = p, files = files))
 }

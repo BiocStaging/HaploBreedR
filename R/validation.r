@@ -24,7 +24,7 @@
 #' @param pheno_id_col Name of the ID column in `phenotype_data`.
 #' @param min_overlap_frac Minimum fraction of phenotyped individuals
 #'   that must also have genotype data.
-#'@return A list of class `hbr_id_report` with `status`, `summary` (a
+#' @return A list of class `hbr_id_report` with `status`, `summary` (a
 #'   one-row `data.table`), `matched_ids`, `phenotype_only_ids`,
 #'   `genotype_only_ids`, and `id_cleaning_changed`.
 #'
@@ -310,8 +310,9 @@ hbr_validate_gwas_snps <- function(gwas_snps,
 #' compatibility ([hbr_validate_genotype_reference()]), and ID overlap
 #' ([hbr_validate_individual_ids()], when phenotypes are supplied) —
 #' and prints a single consolidated report. Optionally writes a plain-
-#' text file and/or a full report set (TXT + HTML + three CSV tables)
-#' to `out_dir`.
+#' text file and/or a full report set (TXT + three CSV tables) to
+#' `out_dir`. Only the TXT and CSV files are written: the HTML
+#' duplicate was removed.
 #'
 #' @param reference A `hbr_reference` object.
 #' @param genotype A `hbr_genotype` object.
@@ -323,11 +324,10 @@ hbr_validate_gwas_snps <- function(gwas_snps,
 #' @return Invisibly, a list with `sequence_qc`, `compatibility`,
 #'   `id_report`, `overall_status`, and `files`.
 #' @examples
-#' \donttest{
 #' if (interactive()) {
-#'   # See the vignette for an end-to-end example that builds a real
-#'   # hbr_reference and hbr_genotype from the toy dataset.
-#' }
+#'   toy <- system.file("extdata", "toy", package = "HaploBreedR")
+#'   # A complete call needs an hbr_reference and hbr_genotype; see the
+#'   # vignette for the construction used here.
 #' }
 #' @export
 hbr_generate_input_qc_report <- function(reference, genotype,
@@ -376,7 +376,7 @@ hbr_generate_input_qc_report <- function(reference, genotype,
   report_text <- paste(cap_out, collapse = "\n")
   cat(report_text, "\n")
 
-  files <- list(txt = NULL, html = NULL,
+  files <- list(txt = NULL,
                 genotype_reference_qc_csv = NULL,
                 sequence_resource_qc_csv  = NULL,
                 individual_id_qc_csv      = NULL)
@@ -394,20 +394,7 @@ hbr_generate_input_qc_report <- function(reference, genotype,
     writeLines(report_text, txt_path)
     files$txt <- txt_path
 
-    html_path <- file.path(out_dir, "input_qc_report.html")
-    html_escaped <- gsub("&", "&amp;", report_text, fixed = TRUE)
-    html_escaped <- gsub("<", "&lt;",  html_escaped, fixed = TRUE)
-    html_escaped <- gsub(">", "&gt;",  html_escaped, fixed = TRUE)
-    writeLines(c(
-      "<!DOCTYPE html>",
-      "<html>",
-      "<head><meta charset=\"utf-8\">",
-      "<title>HaploBreedR Input QC Report</title></head>",
-      "<body><pre style=\"font-family: monospace; font-size: 13px;\">",
-      html_escaped,
-      "</pre></body></html>"),
-      html_path)
-    files$html <- html_path
+    # HTML duplicate removed: the TXT above carries the same content.
 
     geno_ref_csv <- file.path(out_dir, "genotype_reference_qc.csv")
     data.table::fwrite(compat$summary, geno_ref_csv)
@@ -431,4 +418,39 @@ hbr_generate_input_qc_report <- function(reference, genotype,
                  id_report      = id_report,
                  overall_status = overall,
                  files          = files))
+}
+
+#' Pre-flight Validation of Inputs
+#'
+#' Validates PLINK files, phenotype records, GFF3 features, and sample ID overlap
+#' before launching intensive discovery pipelines.
+#'
+#' @param plink_prefix Character. PLINK binary prefix.
+#' @param phenotype_data data.frame of phenotypes.
+#' @param trait_col Character. Target trait column name.
+#' @param pheno_id_col Character. Individual ID column in phenotype_data.
+#' @param gff3 Optional path to GFF3 file.
+#'
+#' @return A list of class \code{hbr_check} detailing compatibility status.
+#' @examples
+#' if (interactive()) {
+#'   pheno <- data.frame(ID = sprintf("IND%02d", 1:10), trait = rnorm(10))
+#'   toy   <- system.file("extdata", "toy", package = "HaploBreedR")
+#'   res   <- hbr_check_inputs(
+#'     plink_prefix   = file.path(toy, "toy"),
+#'     phenotype_data = pheno,
+#'     trait_col      = "trait")
+#' }
+#' @export
+hbr_check_inputs <- function(plink_prefix, phenotype_data, trait_col,
+                             pheno_id_col = "ID", gff3 = NULL) {
+  rep <- hbr_generate_input_qc_report(
+    plink_prefix = plink_prefix,
+    phenotype_data = phenotype_data,
+    trait_col = trait_col,
+    pheno_id_col = pheno_id_col,
+    verbose = TRUE
+  )
+  class(rep) <- "hbr_check"
+  rep
 }

@@ -2,6 +2,16 @@
 # R/haplobreed-analysis.r
 # Single-trait identification of genes carrying superior haplotypes.
 #
+# Memory model
+#   The genotype is held as an `hbr_genotype` whose `$genotypes` slot is a
+#   `BEDMatrix::BEDMatrix` streaming handle when the package is installed,
+#   or a plain numeric matrix otherwise. Every downstream read goes through
+#   `.hbr_pull_genotypes()`, which reads only the requested columns and
+#   applies the row subset (`$row_keep`) and strand swap (`$swap_cols`) at
+#   read time. Canonicalization stores a `canonical_map` (canonical SNP
+#   name -> bed column index) instead of copying the matrix. The RDS
+#   packer streams the matrix chunk by chunk.
+#
 # ============================================================================
 
 #' Single-trait identification of genes carrying superior haplotypes
@@ -76,29 +86,55 @@
 #'   size gates.
 #' @param go_enrichment_cache Cache directory for annotation downloads.
 #' @param save_breeding_rds Save `pipeline_result_for_breeding.rds`.
-#' @param rds_compress Compression of the RDS file(s).
-#' @param rds_reference Where the reference sequences are saved.
+#' @param rds_compress Compression of the RDS file(s). One of `"fast"`,
+#'   `"none"`, `"xz"`.
+#' @param rds_reference Where the reference sequences are saved: 
+#'   `"embedded"` (inside the breeding RDS), `"separate"` (a sibling
+#'   `pipeline_reference.rds`), or `"none"` (drop the sequences).
 #' @param save_plot If `FALSE`, no figures are written.
-#' @param store_all_results Retain every per-gene result.
-#' @param verbose Print progress.
-#' @return Invisibly, a list with the pipeline result.
+#' @param store_all_results Retain every per-gene result. `TRUE` keeps the
+#'   full per-gene object for every tested gene; memory grows linearly with
+#'   the number of genes. Prefer the CSVs on disk unless the caller really
+#'   needs every gene in memory.
+#' @param verbose Print progress. `TRUE` prints one concise status line
+#'   per pipeline phase and per gene; `FALSE` prints nothing except
+#'   errors and warnings.
+#'
+#' @return Invisibly, a list with the pipeline result. Notable elements:
+#'   \describe{
+#'     \item{`reference`}{the `hbr_reference` object used, minus the
+#'       genome FASTA if it was not needed for plotting}
+#'     \item{`geno_mat`}{the `hbr_genotype` source (streaming or in-memory)}
+#'     \item{`geno_ids`}{character vector of the individuals that survived
+#'       ID matching}
+#'     \item{`superior_results`}{list per superior gene: `ns_result`,
+#'       `geno_data`, `hap_mat`, `hap_data`, `test_res`, `superior`,
+#'       `sp_freq`, `gene_annotation`}
+#'     \item{`summary`, `superior_summary`, `attrition`}{per-gene tables
+#'       also written to CSV}
+#'     \item{`phenotype_data`}{the cleaned ID + trait table actually used}
+#'     \item{`functional_snps_all`}{every functional SNP considered
+#'       across all tested genes}
+#'     \item{`gate_params`}{the gate parameter list, so downstream tools
+#'       can replay the gate without re-parsing the summary}
+#'   }
+#'
 #' @examples
-#' \donttest{
-#' if (interactive()) {
-#'   toy <- system.file("extdata", "toy", package = "HaploBreedR")
-#'   res <- haplobreed_analysis(
-#'     plink_prefix     = file.path(toy, "toy"),
-#'     reference_source = "local",
-#'     gff3             = file.path(toy, "toy.gff3"),
-#'     cds              = file.path(toy, "toy.fa"),
-#'     gwas_snps        = read.csv(file.path(toy, "toy_gwas.csv")),
-#'     phenotype_data   = read.csv(file.path(toy, "toy_pheno.csv")),
-#'     trait_col        = "trait",
-#'     direction        = "higher",
-#'     output_dir       = tempdir(),
-#'     save_plot        = FALSE)
-#' }
-#' }
+#' toy <- system.file("extdata", "toy", package = "HaploBreedR")
+#' res <- try(haplobreed_analysis(
+#'   plink_prefix     = file.path(toy, "toy"),
+#'   reference_source = "local",
+#'   gff3             = file.path(toy, "toy.gff3"),
+#'   cds              = file.path(toy, "toy.fa"),
+#'   gwas_snps        = read.csv(file.path(toy, "toy_gwas.csv")),
+#'   phenotype_data   = read.csv(file.path(toy, "toy_pheno.csv")),
+#'   trait_col        = "trait",
+#'   direction        = "higher",
+#'   output_dir       = tempdir(),
+#'   save_plot        = FALSE,
+#'   n_perm           = 100L,
+#'   n_boot           = 100L,
+#'   verbose          = FALSE))
 #'
 #' @export
 haplobreed_analysis <- function(
@@ -182,6 +218,9 @@ haplobreed_analysis <- function(
     store_all_results   = FALSE,
     verbose             = TRUE) {
 
+  # --------------------------------------------------------------------------
+  # Argument validation
+  # --------------------------------------------------------------------------
   direction         <- match.arg(direction)
   phenotype_type    <- match.arg(phenotype_type)
   on_fail           <- match.arg(on_fail)
@@ -229,24 +268,28 @@ haplobreed_analysis <- function(
     dir.create(qc_report_dir, recursive = TRUE, showWarnings = FALSE)
 
   .t_pipeline <- Sys.time()
-  .t_phase    <- .t_pipeline
 
-  cat("\n", strrep("=", 75), "\n", sep = "")
-  cat("HaploBreedR  --  SUPERIOR-HAPLOTYPE ANALYSIS\n")
-  cat(strrep("=", 75), "\n", sep = "")
-  cat("Mode          :", if (mode_gwas) "GWAS" else "DirectGene", "\n")
-  cat("Trait         :", trait_col, "(", trait_label, ")\n")
-  cat("Direction     :", direction, "\n")
-  cat("Reference     :", reference_source, "\n")
-  cat("Output dir    :", output_dir, "\n\n")
+  # --------------------------------------------------------------------------
+  # Header banner (one block)
+  # --------------------------------------------------------------------------
+  if (verbose) {
+    cat("\n")
+    cat(strrep("=", 75), "\n", sep = "")
+    cat("HaploBreedR :: SUPERIOR-HAPLOTYPE ANALYSIS\n")
+    cat(strrep("=", 75), "\n", sep = "")
+    cat(sprintf("Mode=%s | Trait=%s | Direction=%s | Ref=%s\n",
+                if (mode_gwas) "GWAS" else "DirectGene",
+                trait_col, direction, reference_source))
+    cat(strrep("-", 75), "\n")
+  }
 
-  # ========================================================================
+  # ==========================================================================
   # PHASE A -- INPUT PREPARATION
-  # ========================================================================
+  # ==========================================================================
 
   # ----- A.1 Reference -----
   .t <- Sys.time()
-  if (verbose) cat("[A.1] Building reference...\n")
+  if (verbose) cat("[A.1] Reference ..................... ")
 
   ref_paths <- .hbr_resolve_reference_paths(
     gff3            = gff3,
@@ -282,40 +325,39 @@ haplobreed_analysis <- function(
     local   = "CUSTOM",
     ensembl = "CUSTOM")
 
-  # hbr_load_reference() standardizes chromosome names internally.
   reference <- hbr_load_reference(
     genome       = basename(gff3),
     annotation   = annotation_source,
     gff3         = gff3,
     cds          = cds,
     pep          = pep,
-    genome_fasta = genome_fasta)
+    genome_fasta = genome_fasta,
+    verbose      = verbose)
 
   if (is.null(reference$cds) || is.null(reference$utr))
     stop("Reference missing CDS or UTR features.", call. = FALSE)
   if (is.null(reference$cds_seqs) || is.null(reference$pep_seqs))
     stop("Reference missing CDS or peptide sequences.", call. = FALSE)
-  .hbr_log_time(.t, "A.1 reference load", verbose)
 
-  # ----- A.2 Genotype -----
+  if (verbose)
+    cat(sprintf("done (%d genes, %d tx, %.1fs)\n",
+                nrow(reference$genes), nrow(reference$transcripts),
+                as.numeric(difftime(Sys.time(), .t, units = "secs"))))
+
+  # ----- A.2 Genotype (streaming when possible) -----
   .t <- Sys.time()
-  if (verbose) cat("\n[A.2] Preparing genotype...\n")
+  if (verbose) cat("[A.2] Genotype ...................... ")
 
-  genotype <- .hbr_read_genotype_plink(plink_prefix, plink_path)
-  class(genotype)         <- c("hbr_genotype", "list")
-  genotype$source_format  <- "PLINK"
-  genotype$source_path    <- plink_prefix
-  genotype$declared_build <- NA_character_
-  genotype$n_individuals  <- length(genotype$individuals)
-  genotype$n_variants     <- nrow(genotype$variants)
+  genotype <- .hbr_open_genotype_plink(plink_prefix, plink_path,
+                                        verbose = verbose)
 
   if (is.null(genotype$report))
-    genotype <- hbr_normalize_genotype(genotype, reference)
+    genotype <- hbr_normalize_genotype(genotype, reference,
+                                        verbose = verbose)
 
   if (!skip_validation) {
     compat <- hbr_validate_genotype_reference(genotype, reference,
                                                verbose = verbose)
-    print(compat)
     if (compat$status == "FAIL" && !isTRUE(harmonize_strand)) {
       msg <- "Compatibility FAILED and harmonize_strand = FALSE."
       if (on_fail == "stop") stop(msg, call. = FALSE)
@@ -339,14 +381,17 @@ haplobreed_analysis <- function(
     data.table::copy(phenotype_data))
   pheno_clean    <- clean_fun(phenotype_data[[pheno_id_col]])
   phenotype_data <- phenotype_data[pheno_clean %in% matched_raw]
-  .hbr_log_time(.t, "A.2 genotype prep + validate", verbose)
 
-  # ----- A.2b Strand harmonization -----
+  if (verbose)
+    cat(sprintf("done (%d ind, %d snps, %.1fs)\n",
+                genotype$n_individuals, genotype$n_variants,
+                as.numeric(difftime(Sys.time(), .t, units = "secs"))))
+
+  # ----- A.2b Strand harmonization (records swap_cols, no matrix copy) -----
   if (isTRUE(harmonize_strand)) {
-    .t <- Sys.time()
-    if (verbose) cat("\n[A.2b] Harmonizing REF/ALT to reference strand...\n")
-
+    if (verbose) cat("[A.2b] Strand harmonization ......... ")
     if (is.null(reference$genome_seqs)) {
+      if (verbose) cat("skipped (no FASTA)\n")
       warning("No genome FASTA loaded; skipping strand harmonization.",
               call. = FALSE)
     } else {
@@ -360,17 +405,18 @@ haplobreed_analysis <- function(
         genotype$strand_report,
         file.path(output_dir, "strand_harmonization_report.csv"))
 
-      geno_obj$genotypes  <- genotype$genotypes
-      geno_obj$variants   <- genotype$variants
-      geno_obj$n_variants <- nrow(genotype$variants)
+      # Keep the geno_obj handle consistent with the updated swap/drop
+      geno_obj$variants  <- genotype$variants
+      geno_obj$swap_cols <- genotype$swap_cols
+      geno_obj$drop_cols <- genotype$drop_cols %||% integer(0)
 
-      .hbr_log_time(.t, "A.2b strand harmonization", verbose)
+      if (verbose) cat("done\n")
     }
   }
 
   # ----- A.3 ref_alt -----
   .t <- Sys.time()
-  if (verbose) cat("\n[A.3] Building REF/ALT table...\n")
+  if (verbose) cat("[A.3] REF/ALT table ................. ")
 
   if (!is.null(ref_alt)) {
     ref_alt <- data.table::as.data.table(data.table::copy(ref_alt))
@@ -404,7 +450,7 @@ haplobreed_analysis <- function(
       stop("Failed to derive REF/ALT from PLINK prefix.", call. = FALSE)
   }
 
-  geno_snps <- as.character(geno_obj$variants$SNP)
+  geno_snps <- as.character(genotype$variants$SNP)
   overlap   <- sum(ref_alt$SNP %in% geno_snps)
   if (overlap == 0)
     stop("`ref_alt` shares zero SNP IDs with the genotype.", call. = FALSE)
@@ -415,12 +461,11 @@ haplobreed_analysis <- function(
       warning("Could not write snps.rds: ",
               conditionMessage(e), call. = FALSE))
 
-  .hbr_log_time(.t, "A.3 ref_alt", verbose)
+  if (verbose) cat(sprintf("done (%d snps)\n", nrow(ref_alt)))
 
-  # ----- A.4 QC report -----
-  .t <- Sys.time()
+  # ----- A.4 Input-QC report -----
   if (!skip_validation && !is.null(qc_report_dir)) {
-    if (verbose) cat("\n[A.4] Writing input-QC report...\n")
+    if (verbose) cat("[A.4] Input-QC report ................ ")
     tryCatch({
       hbr_generate_input_qc_report(
         reference      = reference,
@@ -428,18 +473,15 @@ haplobreed_analysis <- function(
         phenotype_data = phenotype_data,
         pheno_id_col   = pheno_id_col,
         out_dir        = qc_report_dir)
-      if (verbose) cat("    Written to:", qc_report_dir, "\n")
-    }, error = function(e)
-      warning("QC report failed: ", conditionMessage(e), call. = FALSE))
+      if (verbose) cat("done\n")
+    }, error = function(e) {
+      if (verbose) cat("skipped\n")
+    })
   }
-  .hbr_log_time(.t, "A.4 input QC report", verbose)
 
-  .hbr_log_time(.t_phase, "PHASE A (total)", verbose)
-  .t_phase <- Sys.time()
-
-  # ========================================================================
+  # ==========================================================================
   # PHASE B -- SCIENTIFIC ENGINE
-  # ========================================================================
+  # ==========================================================================
 
   cds_dt    <- reference$cds
   utr_dt    <- reference$utr
@@ -447,17 +489,16 @@ haplobreed_analysis <- function(
   pep_seqs  <- reference$pep_seqs
   all_genes <- data.table::as.data.table(reference$genes)
 
-  # ----- B.1 LD-decay -----
-  .t <- Sys.time()
+  # ----- B.1 LD decay -----
+  if (verbose) cat("[B.1] LD decay ...................... ")
   if (mode_gwas) {
-    if (verbose) cat("\n[B.1] Determining LD-decay distance...\n")
-
     if (!is.null(ld_decay_distance)) {
       ld_decay_distance <- as.numeric(ld_decay_distance)[1]
       ld_decay_summary <- data.table::data.table(
         LD_Decay_bp = ld_decay_distance,
         LD_Decay_kb = ld_decay_distance / 1000,
         Method      = "User_provided")
+      if (verbose) cat(sprintf("user %.1f kb\n", ld_decay_distance / 1000))
 
     } else if (!is.null(ld_decay_file)) {
       if (!file.exists(ld_decay_file))
@@ -468,10 +509,11 @@ haplobreed_analysis <- function(
         LD_Decay_bp = ld_decay_distance,
         LD_Decay_kb = ld_decay_distance / 1000,
         Method      = ldr$method %||% NA_character_)
+      if (verbose) cat(sprintf("file %.1f kb\n", ld_decay_distance / 1000))
 
     } else {
       hap_prefix <- file.path(work_dir, "hbr_geno_hap")
-      hbr_write_plink(geno_obj, hap_prefix, plink_path)
+      hbr_write_plink(genotype, hap_prefix, plink_path, verbose = FALSE)
 
       ldr <- hbr_calc_ld_decay(
         plink_prefix    = hap_prefix,
@@ -487,8 +529,9 @@ haplobreed_analysis <- function(
         LD_Decay_kb = ld_decay_distance / 1000,
         Method      = ldr$method)
       saveRDS(ldr, file.path(output_dir, "ld_decay_result.rds"))
-      data.table::fwrite(ldr$bin_summary,
-                         file.path(output_dir, "ld_decay_bin_summary.csv"))
+      if (verbose)
+        cat(sprintf("computed %.1f kb (%s)\n",
+                    ld_decay_distance / 1000, ldr$method))
     }
     data.table::fwrite(ld_decay_summary,
                        file.path(output_dir, "ld_decay_summary.csv"))
@@ -497,18 +540,17 @@ haplobreed_analysis <- function(
     ld_decay_summary  <- data.table::data.table(
       LD_Decay_bp = NA_real_, LD_Decay_kb = NA_real_,
       Method      = "Not_calculated (direct gene mode)")
+    if (verbose) cat("n/a (direct gene mode)\n")
   }
-  .hbr_log_time(.t, "B.1 LD decay", verbose)
 
   # ----- B.2 Candidate gene table -----
-  .t <- Sys.time()
-  if (verbose) cat("\n[B.2] Building candidate gene table...\n")
+  if (verbose) cat("[B.2] Candidate gene table ........... ")
 
   if (mode_gwas) {
     gwas_snps_dt <- hbr_validate_gwas_snps(
       gwas_snps = gwas_snps, snp_col = gwas_snp_col,
       chr_col = gwas_chr_col, pos_col = gwas_pos_col,
-      conflict_action = "first", verbose = verbose)
+      conflict_action = "first", verbose = FALSE)
     gwas_snps <- data.table::as.data.table(
       data.table::copy(gwas_snps_dt))
 
@@ -528,7 +570,7 @@ haplobreed_analysis <- function(
       chr_col           = "Chromosome",
       pos_col           = "Position",
       merge_overlapping = TRUE,
-      verbose           = verbose)
+      verbose           = FALSE)
 
     regions[, N_Unique_GWAS_SNPs := lengths(GWAS_SNPs)]
     regions[, LD_Decay_bp := ld_decay_distance]
@@ -538,15 +580,14 @@ haplobreed_analysis <- function(
       , .(GWAS_SNP = unlist(GWAS_SNPs, use.names = FALSE)),
       by = .(LD_Region_ID, Chromosome, Region_Start, Region_End)]
     region_snp_map[, GWAS_SNP := as.character(GWAS_SNP)]
-    data.table::fwrite(region_snp_map,
-                       file.path(output_dir,
-                                 "GWAS_SNP_to_LD_region_map.csv"))
+    # GWAS_SNP_to_LD_region_map.csv not written: identical region<->SNP
+    # pairs are already in candidate_genes_from_GWAS_LD_regions.csv.
 
     annotation <- hbr_annotate_regions_with_genes(
       regions = regions, genes = all_genes,
       chr_col = "Chromosome", start_col = "Region_Start",
       end_col = "Region_End", keep_intergenic = keep_intergenic,
-      verbose = verbose)
+      verbose = FALSE)
 
     annotation <- data.table::as.data.table(annotation)
     if (!"Gene_ID" %in% names(annotation)) {
@@ -649,19 +690,26 @@ haplobreed_analysis <- function(
                                  "candidate_genes_direct_list.csv"))
   }
 
-  data.table::fwrite(analysis_gene_map,
-                     file.path(output_dir, "analysis_gene_snp_map.csv"))
+  # analysis_gene_snp_map.csv no longer written: its long-form content
+  # is already in candidate_genes_from_GWAS_LD_regions.csv / direct list.
 
   analysis_genes <- unique(analysis_gene_map$Candidate_Gene_ID)
   analysis_genes <- analysis_genes[!is.na(analysis_genes) &
                                      analysis_genes != ""]
   n_genes <- length(analysis_genes)
   if (!n_genes) stop("No valid candidate genes.", call. = FALSE)
-  .hbr_log_time(.t, "B.2 candidate gene table", verbose)
+
+  if (verbose) {
+    if (mode_gwas)
+      cat(sprintf("done (%d genes, %d LD regions)\n",
+                  data.table::uniqueN(candidate_genes$Candidate_Gene_ID),
+                  nrow(regions)))
+    else
+      cat(sprintf("done (%d direct genes)\n", nrow(candidate_genes)))
+  }
 
   # ----- B.2d Cross-annotation -----
-  .t <- Sys.time()
-  if (verbose) cat("\n[B.2d] Attaching cross-annotation + GO terms...\n")
+  if (verbose) cat("[B.2d] Cross-annotation + GO ....... ")
 
   from_type <- if (toupper(annotation_source) == "MSU7") "MSU" else
     if (toupper(annotation_source) == "RAPDB") "RAP" else NA_character_
@@ -674,23 +722,21 @@ haplobreed_analysis <- function(
       hbr_add_cross_annotation(
         genes = candidate_genes, id_col = "Gene_ID",
         from_type = from_type, to_type = to_type,
-        prefix = to_prefix, attach_go = TRUE, verbose = verbose),
+        prefix = to_prefix, attach_go = TRUE, verbose = FALSE),
       error = function(e) {
         warning("Cross-annotation skipped: ",
                 conditionMessage(e), call. = FALSE)
         candidate_genes
       })
+    if (verbose) cat("done\n")
+  } else {
+    if (verbose) cat("skipped (CUSTOM)\n")
   }
-  .hbr_log_time(.t, "B.2d cross-annotation + GO", verbose)
 
-  # ----- B.3 Canonicalize genotype matrix -----
-  .t <- Sys.time()
-  if (verbose) cat("\n[B.3] Canonicalizing genotype matrix...\n")
+  # ----- B.3 Canonicalize genotype (lazy) -----
+  if (verbose) cat("[B.3] Genotype canonicalization ...... ")
 
-  geno_mat <- geno_obj$genotypes
-  var_dt   <- data.table::as.data.table(geno_obj$variants)
-  rownames(geno_mat) <- hbr_clean_id(rownames(geno_mat))
-
+  var_dt <- data.table::as.data.table(genotype$variants)
   var_dt[, CHR := as.character(CHR)]
   var_dt[, POS := as.numeric(POS)]
   var_dt[, poskey := paste0(CHR, ":", POS)]
@@ -702,27 +748,56 @@ haplobreed_analysis <- function(
   ref_unique <- ref_alt[!duplicated(poskey)]
   pos2canon  <- stats::setNames(ref_unique$SNP, ref_unique$poskey)
 
+  # Canonical name per bed column (NA when no match)
   canon <- unname(pos2canon[var_dt$poskey])
+
+  # Honour drop_ambiguous that was recorded during harmonization
+  drop_cols <- genotype$drop_cols %||% integer(0)
+  if (length(drop_cols)) canon[drop_cols] <- NA_character_
+
   keep  <- !is.na(canon) & canon != ""
-  geno_mat <- geno_mat[, keep, drop = FALSE]
-  colnames(geno_mat) <- canon[keep]
-  dup <- duplicated(colnames(geno_mat))
-  if (any(dup)) geno_mat <- geno_mat[, !dup, drop = FALSE]
-  if (!ncol(geno_mat))
+
+  # First occurrence wins for duplicated canonical names
+  canon_kept <- canon[keep]
+  bed_idx    <- which(keep)
+  dup        <- duplicated(canon_kept)
+  canon_kept <- canon_kept[!dup]
+  bed_idx    <- bed_idx[!dup]
+
+  if (!length(bed_idx))
     stop("No genotype SNPs matched canonical SNP IDs.", call. = FALSE)
 
+  # Store canonical_map = canonical name -> bed column index
+  genotype$canonical_map       <- stats::setNames(bed_idx, canon_kept)
+  genotype$canonical_snp_names <- canon_kept
+
+  # Re-align row_keep so rows correspond to the trait table
   trait_data <- data.table::as.data.table(
     phenotype_data[, c(pheno_id_col, trait_col), with = FALSE])
   data.table::setnames(trait_data, pheno_id_col, "ID")
   trait_data[, ID := as.character(ID)]
 
-  common_final <- intersect(rownames(geno_mat), trait_data$ID)
-  geno_mat   <- geno_mat[common_final, , drop = FALSE]
-  trait_data <- trait_data[match(common_final, trait_data$ID), ]
-  .hbr_log_time(.t, "B.3 genotype canonicalization", verbose)
+  row_keep <- genotype$row_keep
+  row_ids  <- genotype$row_names[row_keep]
+  common   <- intersect(row_ids, trait_data$ID)
+
+  keep_row    <- row_ids %in% common
+  genotype$row_keep      <- row_keep[keep_row]
+  genotype$individuals   <- row_ids[keep_row]
+  genotype$n_individuals <- length(genotype$row_keep)
+
+  trait_data <- trait_data[match(genotype$individuals, trait_data$ID), ]
+
+  if (verbose)
+    cat(sprintf("done (%d snps x %d ind, lazy)\n",
+                length(genotype$canonical_snp_names),
+                genotype$n_individuals))
+
+  # Free the whole-genome FASTA when the plotting layer won't need it.
+  if (!plot_style %in% c("gene_list", "both"))
+    reference$genome_seqs <- NULL
 
   # ----- B.4 Per-gene loop -----
-  .t <- Sys.time()
   outcome_log <- vector("list", as.integer(max(n_genes, 1L)))
 
   record_outcome <- function(i, gene_id, stage, reason = NA_character_,
@@ -746,17 +821,20 @@ haplobreed_analysis <- function(
   superior_gene_results <- list()
   functional_snps_log   <- vector("list", n_genes)
 
-  cat("\n[B.4] Processing", n_genes, "genes...\n")
+  if (verbose) cat(sprintf("[B.4] Processing %d genes ...\n", n_genes))
+
+  .gline <- function(i, id, status)
+    if (isTRUE(verbose))
+      cat(sprintf("[%d/%d] %-22s ... %s\n", i, n_genes, id, status))
 
   for (i in seq_along(analysis_genes)) {
     gene_id <- analysis_genes[i]
-    cat("\n", strrep("-", 65), "\n", sep = "")
-    cat(sprintf("[%d/%d] %s\n", i, n_genes, gene_id))
 
     gene_rows <- candidate_genes[Candidate_Gene_ID == gene_id]
     if (!nrow(gene_rows)) {
       outcome_log[[i]] <- record_outcome(
         i, gene_id, "gene_lookup", "Not found in candidate table")
+      .gline(i, gene_id, "not in candidate table")
       next
     }
 
@@ -787,14 +865,14 @@ haplobreed_analysis <- function(
         cds_seqs = cds_seqs, pep_seqs = pep_seqs,
         all_genes = all_genes, ref_alt = ref_alt,
         use_all_transcripts = use_all_transcripts,
-        regions_to_include  = regions_to_include),
-      error = function(e) {
-        cat("    Functional variant extraction failed:", e$message, "\n")
-        NULL
-      })
+        regions_to_include  = regions_to_include,
+        verbose = FALSE),
+      error = function(e) NULL)
+
     if (is.null(ns_res)) {
       outcome_log[[i]] <- record_outcome(
         i, gene_id, "functional_variant_identification", "failed")
+      .gline(i, gene_id, "no transcript / no CDS overlap")
       next
     }
 
@@ -803,9 +881,9 @@ haplobreed_analysis <- function(
       outcome_log[[i]] <- record_outcome(
         i, gene_id, "no_functional_variants",
         "No requested functional variants", n_functional = 0L)
+      .gline(i, gene_id, "no functional SNPs")
       next
     }
-    cat("    Functional SNPs:", n_functional, "\n")
 
     fs <- data.table::as.data.table(ns_res$functional_snps)
     fs[, gene := gene_id]
@@ -830,20 +908,21 @@ haplobreed_analysis <- function(
       names(fs))
     functional_snps_log[[i]] <- fs[, ..keep_cols]
 
+    # Streaming extract: only this gene's columns are read from disk
     gd <- tryCatch(
       hbr_extract_genotypes(
-        ns_res$functional_snps, geno_mat,
+        ns_res$functional_snps, genotype,
         max_miss_snp, maf_min, max_het_ind, max_miss_ind,
-        min_individuals_qc, gene_label = gene_id),
+        min_individuals_qc, gene_label = NULL, verbose = FALSE),
       error = function(e) NULL)
+
     if (is.null(gd)) {
       outcome_log[[i]] <- record_outcome(
         i, gene_id, "genotype_qc", "No SNPs/individuals passed QC",
         n_functional = n_functional)
+      .gline(i, gene_id, "QC failed")
       next
     }
-    cat("    After genotype QC:", gd$n_snps, "SNPs |",
-        gd$n_individuals, "individuals\n")
 
     hap_mat <- tryCatch(hbr_build_haplotype_matrix(gd),
                         error = function(e) NULL)
@@ -851,6 +930,7 @@ haplobreed_analysis <- function(
       outcome_log[[i]] <- record_outcome(
         i, gene_id, "haplotype_matrix", "failed",
         n_functional, gd$n_snps, gd$n_snps, gd$n_individuals)
+      .gline(i, gene_id, "haplotype matrix failed")
       next
     }
 
@@ -861,9 +941,9 @@ haplobreed_analysis <- function(
       outcome_log[[i]] <- record_outcome(
         i, gene_id, "haplotype_definition", "too few groups",
         n_functional, gd$n_snps, gd$n_snps, gd$n_individuals)
+      .gline(i, gene_id, "haplotypes < 2")
       next
     }
-    cat("    Haplotypes:", hap_data$n_haplotypes, "\n")
 
     sp_freq <- if (subpop_col %in% names(phenotype_data))
       tryCatch(hbr_subpop_freq(hap_data, phenotype_data, subpop_col),
@@ -884,10 +964,9 @@ haplobreed_analysis <- function(
         i, gene_id, "association_test", "failed",
         n_functional, gd$n_snps, gd$n_snps,
         hap_data$n_individuals, hap_data$n_haplotypes)
+      .gline(i, gene_id, "association test failed")
       next
     }
-    cat("    Test:", test_res$test, "| P:",
-        signif(test_res$p_value, 4), "\n")
 
     sup <- tryCatch(
       hbr_identify_superior(
@@ -910,10 +989,19 @@ haplobreed_analysis <- function(
     }
 
     is_superior <- isTRUE(sup$is_superior)
+
+    .gline(i, gene_id, if (is_superior)
+      sprintf("SUPERIOR  %s  d=%.2f  P=%s",
+              sup$haplotype,
+              if (is.finite(sup$cohens_d)) sup$cohens_d else NA_real_,
+              hbr_format_p(test_res$p_value))
+      else
+      sprintf("tested    P=%s  %d hap%s",
+              hbr_format_p(test_res$p_value),
+              hap_data$n_haplotypes,
+              if (hap_data$n_haplotypes == 1L) "" else "s"))
+
     if (is_superior) {
-      cat("    SUPERIOR:", sup$haplotype,
-          "| Mean:", round(sup$mean, 2),
-          "| d:", round(sup$cohens_d, 2), "\n")
       superior_gene_results[[gene_id]] <- list(
         ns_result = ns_res, geno_data = gd, hap_mat = hap_mat,
         hap_data = hap_data, test_res = test_res, superior = sup,
@@ -938,14 +1026,9 @@ haplobreed_analysis <- function(
       data.table::fwrite(ns_res$functional_snps,
                          file.path(gene_output_dir,
                                    paste0(gene_id, "_functional_snps.csv")))
-      if (!is.null(ns_res$all_cds_snps))
-        data.table::fwrite(ns_res$all_cds_snps,
-                           file.path(gene_output_dir,
-                                     paste0(gene_id, "_cds_snps.csv")))
-      if (!is.null(ns_res$all_utr_snps))
-        data.table::fwrite(ns_res$all_utr_snps,
-                           file.path(gene_output_dir,
-                                     paste0(gene_id, "_utr_snps.csv")))
+      # Per-gene _cds_snps.csv and _utr_snps.csv are not written:
+      # _functional_snps.csv already carries what the plot layer needs,
+      # and the additional variants are always excluded from haplotypes.
       if (!is.null(sp_freq))
         data.table::fwrite(sp_freq$long,
                            file.path(gene_output_dir,
@@ -959,8 +1042,7 @@ haplobreed_analysis <- function(
             adjusted_p = NA_real_,
             aa_full_names = aa_full_names,
             formats = figure_formats),
-          error = function(e)
-            cat("    Figure failed:", e$message, "\n"))
+          error = function(e) NULL)
       }
     }
 
@@ -1022,10 +1104,7 @@ haplobreed_analysis <- function(
       n_after_qc = gd$n_snps,
       n_individuals = hap_data$n_individuals,
       n_haplotypes = hap_data$n_haplotypes)
-
-    cat("    Complete\n")
   }
-  .hbr_log_time(.t, "B.4 per-gene loop", verbose)
 
   functional_snps_all <- data.table::rbindlist(
     functional_snps_log[!vapply(functional_snps_log, is.null, logical(1))],
@@ -1034,15 +1113,9 @@ haplobreed_analysis <- function(
     fs_path <- file.path(output_dir,
                          "functional_snps_all_tested_genes.csv")
     data.table::fwrite(functional_snps_all, fs_path)
-    if (verbose)
-      cat(sprintf("    Wrote %s: %d SNPs across %d genes\n",
-                  basename(fs_path),
-                  nrow(functional_snps_all),
-                  data.table::uniqueN(functional_snps_all$gene)))
   }
 
   # ----- B.5 Summary + FDR + publication table + figures -----
-  .t <- Sys.time()
   summary_table <- if (summary_i > 0L)
     data.table::rbindlist(summary_slots[seq_len(summary_i)], fill = TRUE)
   else data.table::data.table()
@@ -1076,11 +1149,6 @@ haplobreed_analysis <- function(
         summary_table[, Is_Superior := Is_Superior_Nominal %in% TRUE &
                         Significant_FDR %in% TRUE]
         keep_sup <- as.character(summary_table[Is_Superior == TRUE][[gid_col]])
-        dropped_sup <- setdiff(names(superior_gene_results), keep_sup)
-        if (length(dropped_sup) && verbose)
-          cat(sprintf("    FDR gate removed %d nominal superior gene(s): %s\n",
-                      length(dropped_sup),
-                      paste(utils::head(dropped_sup, 5), collapse = ", ")))
         superior_gene_results <- superior_gene_results[
           names(superior_gene_results) %in% keep_sup]
       }
@@ -1149,6 +1217,9 @@ haplobreed_analysis <- function(
                                      "publication_table_functional.csv"))
       }
 
+      # superior_genes_list.csv is not written: it was a strict subset of
+      # superior_genes_summary.csv. It is still constructed in memory for
+      # the console top-5 print below.
       superior_genes_list <- data.table::data.table(
         Gene                       = superior_summary[[gid_col]],
         Superior_Haplotype         = superior_summary$Superior_Haplotype,
@@ -1159,22 +1230,26 @@ haplobreed_analysis <- function(
         Superior_Mean              = superior_summary$Superior_Mean,
         Superior_Freq_Analysed_Pct =
           superior_summary$Superior_Freq_Analysed_Pct)
-      data.table::fwrite(superior_genes_list,
-                         file.path(output_dir,
-                                   "superior_genes_list.csv"))
 
-      cat("\n", strrep("=", 50), "\n", sep = "")
-      cat("SUPERIOR GENES FOUND:", nrow(superior_summary), "\n")
-      cat(strrep("=", 50), "\n", sep = "")
-      print(superior_genes_list)
+      if (verbose) {
+        cat(sprintf("      %d superior gene(s):\n", nrow(superior_summary)))
+        top_hits <- utils::head(superior_genes_list, 5L)
+        for (k in seq_len(nrow(top_hits)))
+          cat(sprintf("        %-22s %-8s d=%.2f P=%s\n",
+                      top_hits$Gene[k],
+                      top_hits$Superior_Haplotype[k],
+                      top_hits$Cohens_d[k],
+                      hbr_format_p(top_hits$P_value[k])))
+        if (nrow(superior_genes_list) > 5L)
+          cat(sprintf("        ... (+%d more)\n",
+                      nrow(superior_genes_list) - 5L))
+      }
 
       if (plot_style %in% c("gene_list", "both")) {
-        if (verbose) cat("\n[B.5b] Plotting superior genes...\n")
-
+        if (verbose) cat("[B.5b] Plotting superior genes ........ ")
         superior_ids <- as.character(superior_summary[[gid_col]])
         superior_ids <- superior_ids[!is.na(superior_ids) &
                                        nzchar(superior_ids)]
-
         per_gene_for_plot <- if (save_only_superior)
           superior_dir else output_dir
 
@@ -1197,24 +1272,20 @@ haplobreed_analysis <- function(
               formats       = figure_formats,
               combined_pdf  = plot_combined_pdf,
               figures_dir   = "figures",
-              verbose       = verbose)
-
+              verbose       = FALSE)
             if (verbose)
-              cat(sprintf("    Plotted: %d  | Missing: %d\n",
+              cat(sprintf("done (%d plotted, %d missing)\n",
                           length(plot_out$plots),
                           length(plot_out$missing_genes)))
           }, error = function(e)
-            warning("Superior-gene plotting failed: ",
-                    conditionMessage(e), call. = FALSE))
+            if (verbose) cat("skipped\n"))
+        } else if (verbose) {
+          cat("skipped (no IDs)\n")
         }
       }
 
       if (isTRUE(go_enrichment)) {
-        .t_ann <- Sys.time()
-        if (verbose)
-          cat("\n[B.5c] Annotating publication table with GO / ",
-              "InterPro / PFAM...\n", sep = "")
-
+        if (verbose) cat("[B.5c] Publication-table annotation ... ")
         tryCatch({
           ann_out <- hbr_superior_candidate_genes_functional_characterization(
             candidate_genes            = summary_table_clean,
@@ -1226,7 +1297,7 @@ haplobreed_analysis <- function(
             cache_dir                  = go_enrichment_cache,
             output_dir                 = output_dir,
             output_prefix              = "publication_table_annotated",
-            verbose                    = verbose)
+            verbose                    = FALSE)
 
           if (!is.null(ann_out$table) && nrow(ann_out$table)) {
             data.table::fwrite(
@@ -1237,24 +1308,17 @@ haplobreed_analysis <- function(
                 ann_out$table,
                 file.path(superior_dir,
                           "publication_table_functional.csv"))
-            if (verbose)
-              cat(sprintf("    publication table now has %d columns\n",
-                          ncol(ann_out$table)))
-          }
-        }, error = function(e) {
-          warning("Publication annotation failed: ",
-                  conditionMessage(e), call. = FALSE)
-        })
-        .hbr_log_time(.t_ann, "B.5c annotation", verbose)
+            if (verbose) cat("done\n")
+          } else if (verbose) cat("done (no rows)\n")
+        }, error = function(e)
+          if (verbose) cat("skipped\n"))
 
-        .t_go <- Sys.time()
-        if (verbose) cat("\n[B.5d] GO enrichment on superior genes...\n")
-
+        if (verbose) cat("[B.5d] GO enrichment ................. ")
         go_out <- tryCatch({
           ann <- hbr_read_osa1_r7_annotations(
             source    = go_enrichment_source,
             cache_dir = go_enrichment_cache,
-            verbose   = verbose)
+            verbose   = FALSE)
 
           if (is.null(ann$goslim) || !nrow(ann$goslim))
             stop("No GOSlim annotation available from ",
@@ -1273,10 +1337,6 @@ haplobreed_analysis <- function(
           uni_genes <- uni_genes[!is.na(uni_genes) & nzchar(uni_genes)]
 
           if (length(uni_genes) <= length(sup_genes)) {
-            warning("GO enrichment universe has no non-superior genes ",
-                    "(universe = ", length(uni_genes),
-                    ", superior = ", length(sup_genes),
-                    "). Skipping enrichment.", call. = FALSE)
             NULL
           } else {
             sup_genes <- hbr_normalize_osa1_gene_id(sup_genes)
@@ -1285,16 +1345,7 @@ haplobreed_analysis <- function(
             gs        <- ann$goslim
             go_ids    <- unique(as.character(gs$Gene_ID))
             n_uni_go  <- length(intersect(uni_genes, go_ids))
-            n_sup_go  <- length(intersect(sup_genes, go_ids))
-            if (verbose) {
-              cat(sprintf("    GOSlim: %d genes annotated | universe genes with GO: %d / %d | superior with GO: %d / %d\n",
-                          length(go_ids), n_uni_go, length(uni_genes),
-                          n_sup_go, length(sup_genes)))
-            }
-            if (n_uni_go == 0L)
-              stop("none of the ", length(uni_genes), " universe genes (e.g. ",
-                   paste(utils::head(uni_genes, 3), collapse = ", "),
-                   ") match the GOSlim gene IDs.", call. = FALSE)
+            if (n_uni_go == 0L) stop("no universe gene matches GOSlim.")
 
             enr <- list()
             for (asp in c("BP", "MF", "CC")) {
@@ -1306,12 +1357,8 @@ haplobreed_analysis <- function(
                   aspect         = asp,
                   min_term_size  = go_enrichment_min_term,
                   min_superior   = go_enrichment_min_superior,
-                  verbose        = verbose),
-                error = function(e) {
-                  warning("GO enrichment (", asp, ") failed: ",
-                          conditionMessage(e), call. = FALSE)
-                  data.table::data.table()
-                })
+                  verbose        = FALSE),
+                error = function(e) data.table::data.table())
             }
 
             combined <- data.table::rbindlist(enr, idcol = "Aspect")
@@ -1330,26 +1377,23 @@ haplobreed_analysis <- function(
             }
             combined
           }
-        }, error = function(e) {
-          warning("GO enrichment failed: ",
-                  conditionMessage(e), call. = FALSE)
-          NULL
-        })
+        }, error = function(e) NULL)
 
         if (!is.null(go_out) && nrow(go_out)) {
           n_sig <- sum(go_out$Adjusted_P < 0.05, na.rm = TRUE)
           if (verbose)
-            cat(sprintf("    %d GO terms tested | %d significant (FDR < 0.05)\n",
+            cat(sprintf("done (%d terms, %d FDR-significant)\n",
                         nrow(go_out), n_sig))
+        } else if (verbose) {
+          cat("done (no terms)\n")
         }
-        .hbr_log_time(.t_go, "B.5d GO enrichment", verbose)
       }
 
-    } else {
-      cat("\nNo superior genes were identified.\n")
+    } else if (verbose) {
+      cat("      No superior genes identified.\n")
     }
   } else {
-    cat("\nNo genes reached the association-testing stage.\n")
+    if (verbose) cat("      No genes reached the association-testing stage.\n")
     data.table::fwrite(data.table::data.table(),
                        file.path(output_dir,
                                  "haplotype_summary_functional.csv"))
@@ -1385,12 +1429,14 @@ haplobreed_analysis <- function(
   data.table::fwrite(outcome_table,
                      file.path(output_dir, "gene_attrition_log.csv"))
 
-  cat("\nAttrition breakdown:\n")
-  if (nrow(outcome_table) > 0 && "Exit_Stage" %in% names(outcome_table)) {
-    print(outcome_table[, .N, by = Exit_Stage][order(-N)])
+  if (verbose) {
+    att <- outcome_table[, .N, by = Exit_Stage][order(-N)]
+    cat("[B.6] Attrition:\n")
+    for (k in seq_len(nrow(att)))
+      cat(sprintf("        %-32s %d\n", att$Exit_Stage[k], att$N[k]))
   }
 
-  # ----- B.7 Final summary -----
+  # ----- B.7 Final summary + RDS -----
   n_tested   <- if (nrow(summary_table)) nrow(summary_table) else 0L
   n_fdr      <- if (nrow(summary_table) &&
                     "Significant_FDR" %in% names(summary_table))
@@ -1436,18 +1482,42 @@ haplobreed_analysis <- function(
     Stage                = "gene_identification",
     Schema_Version       = "2",
     FDR_Required         = isTRUE(require_fdr),
+    Alpha_Gate           = alpha,
+    Min_Cohens_D_Gate    = min_cohens_d,
+    Min_Ind_Per_Hap_Gate = min_ind_per_hap,
+    Min_Hap_Freq_Gate    = min_hap_freq,
+    Max_Miss_SNP_Gate    = max_miss_snp,
+    MAF_Min_Gate         = maf_min,
+    Max_Het_Ind_Gate     = max_het_ind,
+    Max_Miss_Ind_Gate    = max_miss_ind,
+    Min_Individuals_QC   = min_individuals_qc,
+    N_Perm_Gate          = n_perm,
+    N_Boot_Gate          = n_boot,
+    Posthoc_Gate         = paste(posthoc, collapse = "+"),
+    PC_Cols_Gate         = paste(pc_cols, collapse = ","),
+    Trait_Threshold_Gate = if (is.null(trait_threshold)) NA_real_ else
+                             as.numeric(trait_threshold),
+    Require_FDR_Gate     = isTRUE(require_fdr),
     Output_Dir           = output_dir)
 
   data.table::fwrite(pipeline_summary,
                      file.path(output_dir, "pipeline_summary.csv"))
-  .hbr_log_time(.t, "B.5-B.7 summary + FDR + plots + final", verbose)
+
+  # Phenotype table actually used (ID-matched, QC-passed). Saved so that
+  # hbr_advanced_decision() can recover the exact per-individual values.
+  tryCatch(
+    data.table::fwrite(
+      phenotype_data[, c(pheno_id_col, trait_col), with = FALSE],
+      file.path(output_dir, "phenotype_data_used.csv")),
+    error = function(e)
+      warning("Could not write phenotype_data_used.csv: ",
+              conditionMessage(e), call. = FALSE))
 
   if (isTRUE(save_breeding_rds)) {
-    .t_rds <- Sys.time()
     tryCatch(
       .hbr_write_breeding_rds(
         superior_results = superior_gene_results,
-        geno_mat         = geno_mat,
+        geno_mat         = genotype,        # hbr_genotype source; streamed pack
         reference        = reference,
         ref_paths        = ref_paths,
         plink_prefix     = plink_prefix,
@@ -1459,28 +1529,24 @@ haplobreed_analysis <- function(
       error = function(e)
         warning("Could not save breeding RDS: ",
                 conditionMessage(e), call. = FALSE))
-    .hbr_log_time(.t_rds, "B.8 breeding RDS", verbose)
   }
 
-  cat("\n", strrep("=", 75), "\n", sep = "")
-  cat("PIPELINE COMPLETE\n")
-  cat(strrep("=", 75), "\n", sep = "")
-  cat("  Mode                :", pipeline_summary$Mode, "\n")
-  cat("  Reference source    :", pipeline_summary$Reference_Source, "\n")
-  cat("  Genes analysed      :", n_genes, "\n")
-  cat("  Genes tested        :", n_tested, "\n")
-  cat("  Significant (FDR)   :", n_fdr, "\n")
-  cat("  Superior haplotypes :", n_superior, "\n")
-  cat("  Output directory    :", output_dir, "\n")
-  .hbr_log_time(.t_pipeline, "PIPELINE TOTAL", verbose)
+  if (verbose) {
+    cat(strrep("-", 75), "\n")
+    cat(sprintf("[DONE] %s | %d analysed, %d tested, %d FDR, %d superior | %.1f min\n",
+                pipeline_summary$Mode, n_genes, n_tested, n_fdr, n_superior,
+                as.numeric(difftime(Sys.time(), .t_pipeline, units = "mins"))))
+    cat("       output: ", output_dir, "\n", sep = "")
+    cat(strrep("=", 75), "\n")
+  }
 
   invisible(list(
     mode              = pipeline_summary$Mode,
     reference         = reference,
     reference_paths   = ref_paths,
     plink_prefix      = plink_prefix,
-    geno_mat          = geno_mat,
-    geno_ids          = rownames(geno_mat),
+    geno_mat          = genotype,             # hbr_genotype (streaming or in-memory)
+    geno_ids          = genotype$individuals,
     strand_report     = genotype$strand_report %||% NULL,
     ld_decay          = ld_decay_summary,
     genomic_regions   = if (mode_gwas) regions else NULL,
@@ -1496,5 +1562,23 @@ haplobreed_analysis <- function(
     attrition         = outcome_table,
     pipeline_summary  = pipeline_summary,
     id_report         = id_report %||% NULL,
-    qc_report_dir     = qc_report_dir))
+    qc_report_dir     = qc_report_dir,
+    phenotype_data      = phenotype_data,
+    functional_snps_all = functional_snps_all,
+    gate_params         = list(
+      alpha              = alpha,
+      min_cohens_d       = min_cohens_d,
+      min_ind_per_hap    = min_ind_per_hap,
+      min_hap_freq       = min_hap_freq,
+      max_miss_snp       = max_miss_snp,
+      maf_min            = maf_min,
+      max_het_ind        = max_het_ind,
+      max_miss_ind       = max_miss_ind,
+      min_individuals_qc = min_individuals_qc,
+      n_perm             = n_perm,
+      n_boot             = n_boot,
+      posthoc            = posthoc,
+      pc_cols            = pc_cols,
+      trait_threshold    = trait_threshold,
+      require_fdr        = require_fdr)))
 }

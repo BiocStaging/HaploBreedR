@@ -27,7 +27,8 @@ g <- structure(
        source_path    = NA_character_,
        declared_build = NA_character_,
        n_individuals  = 1L,
-       n_variants     = 1L),
+       n_variants     = 1L,
+       streaming      = FALSE),
   class = "hbr_genotype")
 print(g)
 

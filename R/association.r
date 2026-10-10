@@ -27,32 +27,32 @@
 #'
 #' @noRd
 hbr_permutation_test <- function(y, g, n_perm = 1000) {
-
+  
   n_perm <- as.integer(n_perm)
   if (is.na(n_perm) || n_perm < 1L)
     stop("`n_perm` must be a positive integer.", call. = FALSE)
-
+  
   fstat <- function(yy, gg) tryCatch(
     summary(stats::aov(yy ~ gg))[[1]]$`F value`[1],
     error = function(e) NA_real_)
-
+  
   obs <- fstat(y, g)
   if (is.na(obs))
     return(list(p_value = NA_real_, observed_stat = NA_real_,
                 statistic = "F", n_valid = 0L))
-
+  
   perm_stats <- vapply(seq_len(n_perm),
                        function(i) fstat(y, sample(g)),
                        numeric(1))
-
+  
   n_valid <- sum(!is.na(perm_stats))
   if (n_valid < 1L)
     return(list(p_value = NA_real_, observed_stat = obs,
                 statistic = "F", n_valid = 0L))
-
+  
   n_exceed <- sum(perm_stats >= obs, na.rm = TRUE)
   p_value  <- (n_exceed + 1) / (n_valid + 1)
-
+  
   list(p_value       = p_value,
        observed_stat = obs,
        statistic     = "F",
@@ -132,14 +132,14 @@ hbr_test_association <- function(
     posthoc  = c("duncan", "tukey"),
     n_perm   = 1000,
     n_boot   = 1000) {
-
+  
   posthoc <- tolower(trimws(as.character(posthoc)))
   posthoc <- unique(posthoc[!is.na(posthoc) & nzchar(posthoc)])
   if (length(posthoc) == 0L || !all(posthoc %in% c("duncan", "tukey")))
     stop("posthoc must be 'duncan', 'tukey', or both.", call. = FALSE)
   run_duncan <- "duncan" %in% posthoc
   run_tukey  <- "tukey"  %in% posthoc
-
+  
   dat <- merge(pheno_data,
                hap_data$haplotypes[, .(ID, Haplotype)],
                by = "ID")
@@ -147,39 +147,39 @@ hbr_test_association <- function(
   if (length(intersect(pheno_data$ID, hap_data$haplotypes$ID)) < 20 ||
       nrow(dat) < 10)
     return(NULL)
-
+  
   n_hap <- data.table::uniqueN(dat$Haplotype)
   if (n_hap < 2L) return(NULL)
-
+  
   avail_pcs <- intersect(pc_cols, names(dat))
   use_pcs   <- length(avail_pcs) > 0
   test_col  <- trait_col
-
+  
   if (use_pcs) {
     pcm <- tryCatch(
       stats::lm(stats::as.formula(paste(trait_col, "~",
-                                         paste(avail_pcs, collapse = "+"))),
-                 data = dat),
+                                        paste(avail_pcs, collapse = "+"))),
+                data = dat),
       error = function(e) NULL)
     dat <- data.table::copy(dat)
     dat[["__r__"]] <- if (!is.null(pcm)) stats::residuals(pcm)
-                     else dat[[trait_col]]
+    else dat[[trait_col]]
     test_col <- "__r__"
   }
-
+  
   perm <- tryCatch(
     hbr_permutation_test(y = dat[[test_col]], g = dat$Haplotype,
-                          n_perm = n_perm),
+                         n_perm = n_perm),
     error = function(e)
       list(p_value = NA_real_, observed_stat = NA_real_,
            statistic = "F", n_valid = 0L))
-
+  
   ci_all <- function() {
     lapply(stats::setNames(nm = unique(dat$Haplotype)), function(h) {
       hbr_bootstrap_ci(dat[Haplotype == h, get(trait_col)], n_boot = n_boot)
     })
   }
-
+  
   build_groups <- function(lr, ci_l) {
     groups <- merge(
       lr,
@@ -203,7 +203,7 @@ hbr_test_association <- function(
       match(groups$Haplotype, hap_data$haplotype_map$Haplotype)]
     groups
   }
-
+  
   base_return <- function(tname, p_val, groups, omega = NA, eff = NA, ...) {
     list(test                   = tname,
          p_value                = p_val,
@@ -221,7 +221,7 @@ hbr_test_association <- function(
          posthoc                = posthoc,
          ...)
   }
-
+  
   # ------------------------------------------------------------------------
   # Two haplotypes: t-test
   # ------------------------------------------------------------------------
@@ -229,28 +229,28 @@ hbr_test_association <- function(
     grps <- sort(unique(as.character(dat$Haplotype)))
     x1 <- dat[Haplotype == grps[1], get(test_col)]
     x2 <- dat[Haplotype == grps[2], get(test_col)]
-
+    
     tt <- tryCatch(stats::t.test(x1, x2, var.equal = TRUE),
-                    error = function(e) NULL)
+                   error = function(e) NULL)
     if (is.null(tt)) return(NULL)
-
+    
     p_val <- tt$p.value
     means <- c(mean(x1, na.rm = TRUE), mean(x2, na.rm = TRUE))
     names(means) <- grps
     ord <- order(-means)
     letters_vec <- c("a", "a")
     if (is.finite(p_val) && p_val < 0.05) letters_vec[ord[2]] <- "b"
-
+    
     lr <- data.table::data.table(
       Haplotype          = grps,
       Duncan_Group       = letters_vec,
       Tukey_Group        = letters_vec,
       Significance_Group = letters_vec,
       Letter             = letters_vec)
-
+    
     groups <- build_groups(lr, ci_all())
     tname  <- paste0("t-test", if (use_pcs) "(PC-adj)" else "")
-
+    
     if (!use_pcs) {
       s1 <- stats::sd(x1, na.rm = TRUE); n1 <- length(x1)
       s2 <- stats::sd(x2, na.rm = TRUE); n2 <- length(x2)
@@ -259,7 +259,7 @@ hbr_test_association <- function(
       cv_pc <- if (is.finite(grand_mean) && grand_mean != 0)
         pooled_sd / grand_mean * 100 else NA_real_
     } else cv_pc <- NA_real_
-
+    
     return(base_return(
       tname, p_val, groups,
       omega             = NA_real_,
@@ -269,15 +269,15 @@ hbr_test_association <- function(
       ms_within         = NA_real_,
       anova_significant = is.finite(p_val) && p_val < 0.05))
   }
-
+  
   # ------------------------------------------------------------------------
   # Three or more: one-way ANOVA + post-hoc
   # ------------------------------------------------------------------------
   aov_formula <- stats::as.formula(paste0("`", test_col, "` ~ Haplotype"))
   aov_m <- tryCatch(stats::aov(aov_formula, data = dat),
-                     error = function(e) NULL)
+                    error = function(e) NULL)
   if (is.null(aov_m)) return(NULL)
-
+  
   ss      <- summary(aov_m)[[1]]
   anova_p <- as.numeric(ss$`Pr(>F)`[1])
   ss_b    <- as.numeric(ss$`Sum Sq`[1])
@@ -285,20 +285,20 @@ hbr_test_association <- function(
   df_b    <- as.numeric(ss$Df[1])
   ms_w    <- as.numeric(ss$`Mean Sq`[2])
   omg     <- max(0, (ss_b - df_b * ms_w) / (ss_t + ms_w))
-
+  
   cv_pc <- if (!use_pcs)
     sqrt(ms_w) / mean(dat[[trait_col]], na.rm = TRUE) * 100
   else NA_real_
-
+  
   gh_lvls <- unique(as.character(dat$Haplotype))
   lr <- data.table::data.table(
     Haplotype          = gh_lvls,
     Duncan_Group       = "a",
     Tukey_Group        = "a",
     Significance_Group = "a")
-
+  
   if (is.finite(anova_p) && anova_p < 0.05) {
-
+    
     if (run_duncan && requireNamespace("agricolae", quietly = TRUE)) {
       duncan_result <- tryCatch({
         dr <- agricolae::duncan.test(aov_m, "Haplotype", alpha = 0.05)
@@ -307,16 +307,16 @@ hbr_test_association <- function(
                              c("Haplotype", "Mean_Duncan", "Duncan_Group"))
         mn[, .(Haplotype, Duncan_Group = as.character(Duncan_Group))]
       }, error = function(e) NULL)
-
+      
       if (!is.null(duncan_result)) {
         lr <- merge(lr, duncan_result, by = "Haplotype",
                     all.x = TRUE, suffixes = c("", ".new"))
         lr[, Duncan_Group := ifelse(is.na(Duncan_Group.new),
-                                     Duncan_Group, Duncan_Group.new)]
+                                    Duncan_Group, Duncan_Group.new)]
         lr[, Duncan_Group.new := NULL]
       }
     }
-
+    
     if (run_tukey &&
         requireNamespace("emmeans", quietly = TRUE) &&
         requireNamespace("multcompView", quietly = TRUE)) {
@@ -328,7 +328,7 @@ hbr_test_association <- function(
                       dimnames = list(gh_lvls, gh_lvls))
         for (k in seq_len(nrow(pw))) {
           pr <- trimws(strsplit(as.character(pw$contrast[k]),
-                                 " - ", fixed = TRUE)[[1]])
+                                " - ", fixed = TRUE)[[1]])
           if (length(pr) == 2L && all(pr %in% gh_lvls)) {
             cm[pr[1], pr[2]] <- pw$p.value[k]
             cm[pr[2], pr[1]] <- pw$p.value[k]
@@ -340,25 +340,25 @@ hbr_test_association <- function(
           Haplotype   = names(cld_r$Letters),
           Tukey_Group = as.character(cld_r$Letters))
       }, error = function(e) NULL)
-
+      
       if (!is.null(tukey_result)) {
         lr <- merge(lr, tukey_result, by = "Haplotype",
                     all.x = TRUE, suffixes = c("", ".new"))
         lr[, Tukey_Group := ifelse(is.na(Tukey_Group.new),
-                                    Tukey_Group, Tukey_Group.new)]
+                                   Tukey_Group, Tukey_Group.new)]
         lr[, Tukey_Group.new := NULL]
       }
     }
   }
-
+  
   if (run_duncan)     lr[, Significance_Group := Duncan_Group]
   else if (run_tukey) lr[, Significance_Group := Tukey_Group]
   lr[, Letter := Significance_Group]
-
+  
   groups <- build_groups(lr, ci_all())
   tname  <- paste0("ANOVA+", paste(posthoc, collapse = "+"),
                    if (use_pcs) "(PC-adj)" else "")
-
+  
   base_return(
     tname, anova_p, groups,
     omega             = omg,
@@ -389,6 +389,11 @@ hbr_test_association <- function(
 #' @param alpha Significance threshold for Gates A and B.
 #' @param trait_threshold Optional trait threshold for Gate D.
 #' @param n_panel Number of individuals in the phenotyped panel.
+#' @param small_sample_correction If `TRUE` (default) the effect size is
+#'   Hedges' g (Cohen's d times the small-sample factor J = 1 - 3/(4df - 1)),
+#'   which removes the upward bias of d in small haplotype groups. The output
+#'   columns keep the names `cohens_d` / `Cohens_d`. Set `FALSE` to reproduce
+#'   runs made before this correction.
 #'
 #' @return A list with the superior haplotype and per-gate diagnostics:
 #'   `haplotype`, `nt_sequence`, `aa_sequence`, `mean`, `median`, `se`,
@@ -400,21 +405,22 @@ hbr_test_association <- function(
 #'
 #' @noRd
 hbr_identify_superior <- function(test_res, direction, trait_col,
-                                   min_cohens_d = 0.3, alpha = 0.05,
-                                   trait_threshold = NULL, n_panel = NULL) {
-
+                                  min_cohens_d = 0.3, alpha = 0.05,
+                                  trait_threshold = NULL, n_panel = NULL,
+                                  small_sample_correction = TRUE) {
+  
   grp <- data.table::as.data.table(test_res$groups)
-
+  
   extreme_mean <- if (direction == "higher") max(grp$Mean) else min(grp$Mean)
   extreme_grp  <- grp[grp$Mean == extreme_mean, ]
-
+  
   if (nrow(extreme_grp) > 1) {
     best <- extreme_grp[extreme_grp$N == max(extreme_grp$N), ]
     if (nrow(best) > 1) best <- best[1, ]
   } else {
     best <- extreme_grp
   }
-
+  
   o <- order(grp$Mean, decreasing = (direction == "higher"))
   if (nrow(grp) >= 2) {
     sec <- grp[o[2], ]
@@ -430,6 +436,12 @@ hbr_identify_superior <- function(test_res, direction, trait_col,
                   (length(g1) + length(g2) - 2))
     cohens_d <- if (!is.na(psd) && psd > 0)
       abs(mean(g1, na.rm = TRUE) - mean(g2, na.rm = TRUE)) / psd else NA
+    # Hedges' (1981) small-sample correction: Cohen's d is biased upward when
+    # groups are small (e.g. 3 individuals per haplotype). J = 1 - 3 / (4 df - 1).
+    if (isTRUE(small_sample_correction) && !is.na(cohens_d)) {
+      n12 <- length(g1) + length(g2)
+      if (n12 > 2L) cohens_d <- cohens_d * (1 - 3 / (4 * (n12 - 2) - 1))
+    }
     dm <- best$Mean - sec$Mean
     dl <- dm - 1.96 * sqrt(best$SE^2 + sec$SE^2)
     du <- dm + 1.96 * sqrt(best$SE^2 + sec$SE^2)
@@ -439,36 +451,36 @@ hbr_identify_superior <- function(test_res, direction, trait_col,
     cohens_d <- NA_real_
     dm <- dl <- du <- NA_real_
   }
-
+  
   gate_a <- isTRUE(test_res$p_value < alpha)
   gate_b <- isTRUE(test_res$permutation_p < alpha)
   gate_c <- !is.na(cohens_d) && cohens_d >= min_cohens_d
-
+  
   gate_d <- TRUE
   if (!is.null(trait_threshold)) {
     gate_d <- if (direction == "higher")
       isTRUE(best$Mean >= trait_threshold)
-      else isTRUE(best$Mean <= trait_threshold)
+    else isTRUE(best$Mean <= trait_threshold)
   }
-
+  
   is_sup <- gate_a && gate_b && gate_c && gate_d
-
+  
   fail <- c(
     if (!gate_a) sprintf("p>=%.2g", alpha),
     if (!gate_b) sprintf("perm-p>=%.2g", alpha),
     if (!gate_c) sprintf("d=%.2f < %.1f", cohens_d, min_cohens_d),
     if (!gate_d) sprintf("mean=%.3g does not cross trait_threshold=%.3g",
-                          best$Mean, trait_threshold))
-
+                         best$Mean, trait_threshold))
+  
   freq_analysed_pct <- round(best$N / sum(grp$N) * 100, 2)
   freq_panel_pct <- if (!is.null(n_panel) && n_panel > 0)
     round(best$N / n_panel * 100, 2) else NA_real_
-
+  
   list(
     haplotype = best$Haplotype,
     nt_sequence = best$NT_Sequence,
     aa_sequence = if ("AA_Sequence" %in% names(best)) best$AA_Sequence
-                  else NA,
+    else NA,
     mean   = best$Mean,
     median = if ("Median" %in% names(best)) best$Median else NA,
     se     = if ("SE" %in% names(best)) best$SE else NA,
@@ -478,7 +490,7 @@ hbr_identify_superior <- function(test_res, direction, trait_col,
     freq_analysed_pct = freq_analysed_pct,
     freq_panel_pct    = freq_panel_pct,
     letter            = if ("Letter" %in% names(best))
-                          best[["Letter"]] else NA_character_,
+      best[["Letter"]] else NA_character_,
     second_haplotype  = sec_hap,
     is_superior       = is_sup,
     gate_a_sig        = gate_a,
@@ -492,4 +504,42 @@ hbr_identify_superior <- function(test_res, direction, trait_col,
     diff_mean         = dm,
     diff_ci_lower     = dl,
     diff_ci_upper     = du)
+}
+
+#' Re-apply Superior Haplotype Gates (Sensitivity Analysis)
+#'
+#' Re-filters candidate genes across modified significance thresholds (alpha),
+#' effect sizes (Hedges' g), or trait thresholds directly from stored summary tables.
+#'
+#' @param summary_table data.frame or data.table of tested candidate genes from pipeline output.
+#' @param alpha Numeric. Significance threshold (default 0.05).
+#' @param min_cohens_d Numeric. Minimum effect size threshold (default 0.5).
+#' @param require_fdr Logical. Enforce Benjamini-Hochberg FDR correction.
+#' @param trait_threshold Optional numeric trait value requirement.
+#' @param direction Character. "higher" or "lower".
+#'
+#' @return Updated summary data.table with recalculated `Is_Superior` calls.
+#' @examples
+#' summary_table <- data.frame(
+#'   P_value = c(0.001, 0.02, 0.5),
+#'   Cohens_d = c(0.8, 0.4, 0.1))
+#' hbr_regate(summary_table, alpha = 0.05, min_cohens_d = 0.3)
+#' @export
+hbr_regate <- function(summary_table, alpha = 0.05, min_cohens_d = 0.5,
+                       require_fdr = TRUE, trait_threshold = NULL,
+                       direction = "higher") {
+  dt <- data.table::as.data.table(data.table::copy(summary_table))
+  if (!"P_value" %in% names(dt))
+    stop("summary_table must contain a 'P_value' column", call. = FALSE)
+  
+  dt[, Adjusted_P := stats::p.adjust(P_value, method = "BH")]
+  dt[, Significant_FDR := !is.na(Adjusted_P) & Adjusted_P < alpha]
+  dt[, Significant_Nominal := !is.na(P_value) & P_value < alpha]
+  
+  d_col <- if ("Cohens_d" %in% names(dt)) "Cohens_d" else "Hedges_g"
+  eff_ok <- if (d_col %in% names(dt)) dt[[d_col]] >= min_cohens_d else TRUE
+  
+  sig_check <- if (require_fdr) dt$Significant_FDR else dt$Significant_Nominal
+  dt[, Is_Superior := sig_check & eff_ok]
+  dt
 }

@@ -39,14 +39,14 @@ Runs the three input-QC checks — sequence-resource QC
 compatibility ([hbr_validate_genotype_reference()]), and ID overlap
 ([hbr_validate_individual_ids()], when phenotypes are supplied) —
 and prints a single consolidated report. Optionally writes a plain-
-text file and/or a full report set (TXT + HTML + three CSV tables)
-to `out_dir`.
+text file and/or a full report set (TXT + three CSV tables) to
+`out_dir`. Only the TXT and CSV files are written: the HTML
+duplicate was removed.
 }
 \examples{
-\donttest{
 if (interactive()) {
-  # See the vignette for an end-to-end example that builds a real
-  # hbr_reference and hbr_genotype from the toy dataset.
-}
+  toy <- system.file("extdata", "toy", package = "HaploBreedR")
+  # A complete call needs an hbr_reference and hbr_genotype; see the
+  # vignette for the construction used here.
 }
 }

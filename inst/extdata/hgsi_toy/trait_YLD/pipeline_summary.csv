@@ -1,0 +1,2 @@
+Mode,Annotation_Source,Trait,Direction,PLINK_Prefix,Genes_Tested,Superior_Haplotypes,Schema_Version,FDR_Required,Alpha_Gate,Min_Cohens_D_Gate,Min_Ind_Per_Hap_Gate,Min_Hap_Freq_Gate,MAF_Min_Gate,PC_Cols_Gate,Trait_Threshold_Gate,Require_FDR_Gate,Output_Dir
+DirectGene,CUSTOM,YLD,higher,inst/extdata/hgsi_toy/geno_toy,8,2,2,TRUE,0.05,0.3,3,0,0.05,"",,TRUE,inst/extdata/hgsi_toy/trait_YLD

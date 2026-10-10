@@ -88,15 +88,4 @@ the requested formats. `gene_list` may be a character vector of gene
 IDs, a path to a summary CSV, a directory containing the pipeline
 outputs, or an in-memory `data.table`.
 }
-\examples{
-toy <- system.file("extdata", "toy", package = "HaploBreedR")
-hbr_plot_gene_list(
-  gene_list     = "gene1",
-  output_dir    = tempdir(),
-  per_gene_dir  = toy,
-  trait_col     = "trait_value",
-  formats       = "pdf",
-  combined_pdf  = FALSE,
-  verbose       = FALSE)
-
-}
+\keyword{internal}
