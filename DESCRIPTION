@@ -47,7 +47,6 @@ Suggests:
     openxlsx (>= 4.2),
     readxl (>= 1.4),
     AnnotationDbi (>= 1.60.0),
-    org.Osativa.eg.db (>= 3.16.0),
     BiocFileCache (>= 2.6.0),
     BiocStyle (>= 2.26.0),
     knitr (>= 1.40),
