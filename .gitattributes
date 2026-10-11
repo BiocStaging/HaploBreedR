@@ -1,0 +1,12 @@
+* text=auto eol=lf
+*.pdf binary
+*.png binary
+*.tiff binary
+*.tif binary
+*.jpg binary
+*.jpeg binary
+*.rds binary
+*.xlsx binary
+*.bed binary
+*.bim text
+*.fam text
