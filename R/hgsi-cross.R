@@ -734,53 +734,128 @@ hbr_rice_genetic_map <- function() {
 }
 
 
-# ============================================================================
-# Bioconductor Exported Modular Wrappers
-# ============================================================================
-
-#' Interactive Cross Query Planning
+#' Plan a cross between named parents
 #'
-#' Evaluates target haplotype block coverage, pyramiding probabilities, and
-#' population sizing requirements for a specific user-named cross combination.
+#' For any pair of parents in a [hbr_advanced_decision()] result — not
+#' only the top-ranked crosses — reports which haplotype blocks are
+#' fixed, segregating, split between the parents (a recombinant is
+#' needed) or missing, the exact probability that a doubled-haploid
+#' progeny carries every segregating target haplotype, the F2
+#' probabilities, and the number of plants needed to recover at least
+#' one carrier with the requested confidence.
 #'
-#' @param decision_obj An \code{hgsi_advanced} object from [hbr_advanced_decision()].
-#' @param parent_a Character. ID of the first parent.
-#' @param parent_b Character. ID of the second parent.
-#' @param mating Character. "DH" (Doubled Haploids) or "RIL" (Recombinant Inbred Lines).
+#' @details
+#' The DH probability is computed at the gene level with Haldane's map
+#' function, so linkage in coupling or repulsion enters exactly. F2
+#' probabilities ignore linkage and count one locus per segregating
+#' block or per differing gene of a split block. Plant numbers solve
+#' `1 - (1 - p)^N >= conf` (Sedcole 1977). The mid-parent index uses
+#' the result's multi-trait index (larger is better in the pipeline's
+#' direction). Usefulness and progeny SD are reported only for pairs
+#' that were computed in the result.
 #'
-#' @return A list detailing block states, DH/RIL pyramiding probabilities,
-#'   and Sedcole (1977) N95 plant population requirements.
+#' @param x A result of [hbr_advanced_decision()] that was run with a
+#'   genetic map (so `x$target` is populated).
+#' @param parent_a Line IDs. When `parent_b` is `NULL`, all pairs
+#'   among `parent_a` are planned.
+#' @param parent_b Optional line IDs, same length as `parent_a`.
+#' @param mating `"DH"` or `"RIL"` (RIL by selfing) for the linked
+#'   probability.
+#' @param conf Confidence for the number of plants. Default `0.95`.
+#'
+#' @return A data.frame with one row per cross, columns `parent_a`,
+#'   `parent_b`, `mid_index`, `n_blocks_fixed`, `n_blocks_segregating`,
+#'   `n_blocks_split`, `n_blocks_incomplete`, `n_blocks_covered`,
+#'   `n_blocks_target`, `p_pyramid_DH` or `p_pyramid_RIL`,
+#'   `p_pyramid_F2_hom`, `plants_needed`, and, when available,
+#'   `sd_index` and `uc`.
+#'
+#' @seealso [hbr_advanced_decision()], [hbr_pyramid_probability()],
+#'   [hbr_population_size()].
+#'
 #' @examples
-#' dec <- structure(
-#'   list(ids = c("A", "B"),
-#'        blocks = data.frame(block = "HB001", chr = "1",
-#'                            start_cM = 10, end_cM = 12)),
+#' # A minimal hgsi_advanced stub, sufficient for planning only
+#' res <- structure(list(
+#'   ids    = c("A", "B", "C"),
+#'   index  = c(1.0, 0.8, 0.6),
+#'   crosses = data.frame(parent_a = "A", parent_b = "B",
+#'                        uc = 1.5, sd_index = 0.4),
+#'   target = list(
+#'     carry = matrix(c(TRUE, FALSE, TRUE, FALSE, TRUE, TRUE),
+#'                    nrow = 3, ncol = 2,
+#'                    dimnames = list(c("A", "B", "C"),
+#'                                    c("GENE01", "GENE02"))),
+#'     block = c(1L, 1L),
+#'     units = data.frame(gene = c("GENE01", "GENE02"),
+#'                        chr  = c("1", "1"),
+#'                        cm   = c(10, 10.5),
+#'                        stringsAsFactors = FALSE))),
 #'   class = "hgsi_advanced")
-#' hbr_cross_plan(dec, "A", "B")
+#' hbr_cross_plan(res, "A", "B")
+#' hbr_cross_plan(res, c("A", "B"), c("B", "C"))
+#'
 #' @export
-hbr_cross_plan <- function(decision_obj, parent_a, parent_b, mating = c("DH", "RIL")) {
+hbr_cross_plan <- function(x, parent_a, parent_b = NULL,
+                           mating = c("DH", "RIL"), conf = 0.95) {
   mating <- match.arg(mating)
-  if (!inherits(decision_obj, "hgsi_advanced"))
-    stop("`decision_obj` must be an hgsi_advanced object", call. = FALSE)
-  cand_ids <- decision_obj$ids
-  ia <- match(parent_a, cand_ids)
-  ib <- match(parent_b, cand_ids)
-  if (is.na(ia) || is.na(ib))
-    stop("One or both parents not found in decision object accessions", call. = FALSE)
+  if (!inherits(x, "hgsi_advanced"))
+    stop("`x` must be a result of hbr_advanced_decision()",
+         call. = FALSE)
+  if (is.null(x$target))
+    stop("this result has no haplotype blocks (no genetic map or ",
+         "no superior haplotype)", call. = FALSE)
   
-  if (is.null(decision_obj$blocks) || nrow(decision_obj$blocks) == 0L) {
-    message("No target blocks defined in decision object.")
-    return(NULL)
+  if (is.null(parent_b)) {
+    pr <- t(utils::combn(unique(as.character(parent_a)), 2))
+    a <- pr[, 1]
+    b <- pr[, 2]
+  } else {
+    a <- as.character(parent_a)
+    b <- as.character(parent_b)
+    if (length(a) != length(b))
+      stop("`parent_a` and `parent_b` must have the same length",
+           call. = FALSE)
   }
   
-  pairs <- matrix(c(ia, ib), nrow = 1L)
-  res <- list(
-    parent_a = parent_a,
-    parent_b = parent_b,
-    mating = mating,
-    blocks = decision_obj$blocks
-  )
-  res
+  ia <- match(a, x$ids)
+  ib <- match(b, x$ids)
+  if (anyNA(ia) || anyNA(ib))
+    stop("unknown line(s): ",
+         paste(unique(c(a[is.na(ia)], b[is.na(ib)])), collapse = ", "),
+         call. = FALSE)
+  
+  tg <- x$target
+  pb <- .hgsi_cross_blocks(tg$carry, tg$block, cbind(ia, ib),
+                           tg$units$chr, tg$units$cm, mating)
+  
+  out <- data.frame(
+    parent_a             = a,
+    parent_b             = b,
+    mid_index            = (x$index[ia] + x$index[ib]) / 2,
+    n_blocks_fixed       = pb[, "n_blocks_fixed"],
+    n_blocks_segregating = pb[, "n_blocks_segregating"],
+    n_blocks_split       = pb[, "n_blocks_split"],
+    n_blocks_incomplete  = pb[, "n_blocks_incomplete"],
+    n_blocks_covered     = pb[, "n_blocks_covered"],
+    n_blocks_target      = length(unique(tg$block)),
+    p_pyramid            = pb[, "p_pyramid_DH"],
+    p_pyramid_F2_hom     = pb[, "p_pyramid_F2_hom"],
+    plants_needed        = .hgsi_n_for_confidence(pb[, "p_pyramid_DH"], conf),
+    stringsAsFactors     = FALSE)
+  names(out)[names(out) == "p_pyramid"] <- paste0("p_pyramid_", mating)
+  
+  cr <- as.data.frame(x$crosses)
+  if (nrow(cr) && all(c("parent_a", "parent_b", "uc", "sd_index") %in%
+                      names(cr))) {
+    k1 <- paste(cr$parent_a, cr$parent_b)
+    k2 <- paste(cr$parent_b, cr$parent_a)
+    m  <- match(paste(a, b), k1)
+    m2 <- match(paste(a, b), k2)
+    m[is.na(m)] <- m2[is.na(m)]
+    out$sd_index <- cr$sd_index[m]
+    out$uc       <- cr$uc[m]
+  }
+  out
 }
 
 #' Analytical Cross Usefulness

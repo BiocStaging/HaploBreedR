@@ -30,7 +30,7 @@ improving readability. All internal helpers are shorter than 50 lines.
 \seealso{
 Useful links:
 \itemize{
-  \item \url{https://github.com/aksruchi/HaploBreedR}
+  \item \url{https://aksruchi.github.io/HaploBreedR}
   \item Report bugs at \url{https://github.com/aksruchi/HaploBreedR/issues}
 }
 

@@ -1,4 +1,4 @@
-url: https://github.com/aksruchi/HaploBreedR
+url: https://aksruchi.github.io/HaploBreedR
 
 template:
   bootstrap: 5
@@ -9,7 +9,7 @@ template:
 
 navbar:
   structure:
-    left:  [intro, infographic, reference, articles, news]
+    left:  [intro, reference, articles, news, infographic]
     right: [search, github]
   components:
     infographic:
@@ -35,9 +35,10 @@ reference:
   - title: "Pipeline: Superior Haplotype Discovery"
     desc: >
       End-to-end and modular tools for functional variant identification,
-      intragenic haplotype assembly, association testing, and gate
-      re-application. See `haplobreed_analysis()` for the single-trait
-      pipeline; the remaining functions are the per-step entry points.
+      intragenic haplotype assembly, association testing, gate
+      re-application, and run loading. See `haplobreed_analysis()` for
+      the single-trait pipeline; the remaining functions are the per-step
+      entry points.
     contents:
       - haplobreed_analysis
       - hbr_check_inputs
@@ -109,7 +110,7 @@ reference:
   - title: "S3 methods for pipeline and fit objects"
     desc: >
       Print, summary, and plot methods for the classed objects the
-      pipeline returns.
+      pipeline and the fit/design step return.
     contents:
       - print.hbr_run
       - summary.hbr_run
@@ -119,6 +120,8 @@ reference:
       - print.hgsi_advanced
       - summary.hgsi_advanced
       - plot.hgsi_advanced
+      - print.hbr_regate
+      - print.hbr_blocks
 
   - title: "S3 methods for reference and QC objects"
     desc: >

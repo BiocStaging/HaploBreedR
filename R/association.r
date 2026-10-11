@@ -506,29 +506,180 @@ hbr_identify_superior <- function(test_res, direction, trait_col,
     diff_ci_upper     = du)
 }
 
-#' Re-apply Superior Haplotype Gates (Sensitivity Analysis)
+#' Re-apply the superior-haplotype rule with different settings
 #'
-#' Re-filters candidate genes across modified significance thresholds (alpha),
-#' effect sizes (Hedges' g), or trait thresholds directly from stored summary tables.
+#' The pipeline calls a haplotype superior when four gates pass: a
+#' nominal significance threshold on the trait association (A), a
+#' permutation-based significance threshold (B), an effect-size
+#' minimum on the best-versus-runner-up comparison (C), and — when
+#' requested — an absolute trait value the best haplotype must reach
+#' (D). `hbr_regate()` recomputes which genes pass these gates under
+#' new thresholds, using the statistics already stored in the run, and
+#' reports how the call changes.
 #'
-#' @param summary_table data.frame or data.table of tested candidate genes from pipeline output.
-#' @param alpha Numeric. Significance threshold (default 0.05).
-#' @param min_cohens_d Numeric. Minimum effect size threshold (default 0.5).
-#' @param require_fdr Logical. Enforce Benjamini-Hochberg FDR correction.
-#' @param trait_threshold Optional numeric trait value requirement.
-#' @param direction Character. "higher" or "lower".
+#' @details
+#' Two calling conventions are supported.
 #'
-#' @return Updated summary data.table with recalculated `Is_Superior` calls.
+#' **Data.frame input.** When `x` is a data.frame carrying at least a
+#' `P_value` column (and, for the effect-size gate, `Cohens_d` or
+#' `Hedges_g`), the function returns a copy of the table with
+#' `Adjusted_P`, `Significant_FDR`, `Significant_Nominal` and
+#' `Is_Superior` recomputed. This is the legacy behaviour and is fully
+#' backward compatible.
+#'
+#' **Run input.** When `x` is an `hbr_run` (from
+#' [hbr_read_results()]) or anything that function accepts, all four
+#' gates are recomputed — including the permutation gate and, when the
+#' pipeline stored a trait threshold, the trait gate. Arguments left
+#' at `NULL` inherit the run's stored values, so the default call
+#' reproduces the pipeline exactly. The return is a classed object with
+#' the per-gene calls, the effective settings, the genes gained and
+#' lost versus the stored call, and a Jaccard overlap statistic.
+#'
+#' The PCs the pipeline used and the Hedges correction cannot be
+#' changed here, because both alter the stored statistics; re-run the
+#' pipeline for that.
+#'
+#' @param x A data.frame (legacy) or an `hbr_run` (new).
+#' @param alpha Significance threshold for the nominal and permutation
+#'   gates, and for Benjamini-Hochberg FDR when `require_fdr = TRUE`.
+#'   `NULL` inherits the run's stored value.
+#' @param min_cohens_d Minimum effect size for gate C. `NULL` inherits.
+#' @param require_fdr If `TRUE`, a gene is superior only if it also
+#'   passes BH-FDR across all tested genes. `NULL` inherits.
+#' @param trait_threshold Absolute trait value gate D. `NA` removes the
+#'   threshold. `NULL` inherits.
+#' @param direction Kept for backward compatibility with the legacy
+#'   signature; ignored. The run carries its own direction.
+#' @param ... Ignored.
+#'
+#' @return When `x` is a data.frame: a `data.table` with the recomputed
+#'   columns. When `x` is an `hbr_run`: an object of class
+#'   `hbr_regate` with elements `genes`, `settings`, `overlap` and
+#'   `check`.
+#'
+#' @seealso [hbr_read_results()] to build the run input,
+#'   [haplobreed_analysis()] for the pipeline that produced it.
+#'
 #' @examples
+#' # Legacy: data.frame input
 #' summary_table <- data.frame(
-#'   P_value = c(0.001, 0.02, 0.5),
+#'   P_value  = c(0.001, 0.02, 0.5),
 #'   Cohens_d = c(0.8, 0.4, 0.1))
 #' hbr_regate(summary_table, alpha = 0.05, min_cohens_d = 0.3)
+#'
+#' # New: hbr_run input re-applies all four gates
+#' toy <- system.file("extdata", "hgsi_toy", "trait_YLD",
+#'                    package = "HaploBreedR")
+#' if (nzchar(toy) && dir.exists(toy)) {
+#'   run <- hbr_read_results(toy)
+#'   rg  <- hbr_regate(run, alpha = 0.01, min_cohens_d = 0.5)
+#'   rg$overlap$gained
+#' }
+#'
 #' @export
-hbr_regate <- function(summary_table, alpha = 0.05, min_cohens_d = 0.5,
-                       require_fdr = TRUE, trait_threshold = NULL,
-                       direction = "higher") {
-  dt <- data.table::as.data.table(data.table::copy(summary_table))
+hbr_regate <- function(x, alpha = NULL, min_cohens_d = NULL,
+                       require_fdr = NULL, trait_threshold = NULL,
+                       direction = NULL, ...) {
+  
+  # ---- Legacy path: data.frame input -------------------------------------
+  if (is.data.frame(x)) {
+    a  <- if (is.null(alpha)) 0.05 else alpha
+    md <- if (is.null(min_cohens_d)) 0.5 else min_cohens_d
+    fd <- if (is.null(require_fdr)) TRUE else require_fdr
+    return(.hbr_regate_df(x, a, md, fd))
+  }
+  
+  # ---- New path: hbr_run input -------------------------------------------
+  run <- if (inherits(x, "hbr_run")) x else hbr_read_results(x)
+  if (is.list(run) && !inherits(run, "hbr_run"))
+    stop("supply one trait (a single hbr_run)", call. = FALSE)
+  
+  tb <- run$table
+  g  <- run$gate
+  need <- c("P_value", "Permutation_P", "Cohens_d", "Superior_Mean")
+  miss <- setdiff(need, names(tb))
+  if (length(miss))
+    stop("the results table lacks: ", paste(miss, collapse = ", "),
+         call. = FALSE)
+  
+  gate_calls <- function(a, md, thr, fdr) {
+    p  <- as.numeric(tb$P_value)
+    pp <- as.numeric(tb$Permutation_P)
+    d  <- as.numeric(tb$Cohens_d)
+    m  <- as.numeric(tb$Superior_Mean)
+    ga <- !is.na(p) & p < a
+    gb <- !is.na(pp) & pp < a
+    gc <- !is.na(d) & d >= md
+    gd <- if (is.finite(thr))
+      !is.na(m) & (if (run$direction == "higher") m >= thr else m <= thr)
+    else rep(TRUE, length(p))
+    nominal <- ga & gb & gc & gd
+    adj <- hbr_apply_fdr_correction(p, "BH")
+    list(nominal = nominal,
+         adj     = adj,
+         superior = if (isTRUE(fdr))
+           nominal & !is.na(adj) & adj < a else nominal)
+  }
+  
+  stored <- list(alpha = g$alpha, min_d = g$min_d,
+                 thr = g$trait_threshold, fdr = g$require_fdr)
+  used <- list(
+    alpha = if (is.null(alpha)) stored$alpha else alpha,
+    min_d = if (is.null(min_cohens_d)) stored$min_d else min_cohens_d,
+    thr   = if (is.null(trait_threshold)) stored$thr else trait_threshold,
+    fdr   = if (is.null(require_fdr)) stored$fdr else require_fdr)
+  
+  new  <- gate_calls(used$alpha, used$min_d, used$thr, used$fdr)
+  old  <- gate_calls(stored$alpha, stored$min_d, stored$thr, stored$fdr)
+  orig <- if ("Is_Superior" %in% names(tb))
+    as.logical(tb$Is_Superior) %in% TRUE else tb$is_superior
+  
+  genes <- data.frame(
+    gene = tb$gene,
+    Chr  = if ("Chr" %in% names(tb)) tb$Chr else NA_character_,
+    P_value = as.numeric(tb$P_value),
+    Adjusted_P = new$adj,
+    Cohens_d = as.numeric(tb$Cohens_d),
+    Superior_Haplotype = if ("Superior_Haplotype" %in% names(tb))
+      tb$Superior_Haplotype else NA_character_,
+    superior_stored = orig,
+    superior_new    = new$superior,
+    stringsAsFactors = FALSE)
+  
+  inter <- sum(orig & new$superior)
+  uni   <- sum(orig | new$superior)
+  
+  structure(list(
+    genes = genes,
+    settings = list(stored = stored, used = used,
+                    direction = run$direction),
+    overlap = list(
+      n_stored = sum(orig),
+      n_new    = sum(new$superior),
+      gained   = genes$gene[!orig & new$superior],
+      lost     = genes$gene[orig & !new$superior],
+      jaccard  = if (uni) inter / uni else NA_real_),
+    check = list(
+      n_disagree = sum(old$superior != orig),
+      agrees     = all(old$superior == orig))),
+    class = "hbr_regate")
+}
+
+#' Recompute the superior-haplotype call on a summary table
+#'
+#' Legacy worker: returns a copy of a summary data.frame with the
+#' significance and superior flags recomputed. Used by the data.frame
+#' branch of [hbr_regate()].
+#'
+#' @param dt A data.frame or data.table with a `P_value` column.
+#' @param alpha Significance threshold.
+#' @param min_cohens_d Minimum effect size.
+#' @param require_fdr If `TRUE`, use BH-FDR-adjusted p-values.
+#' @return A data.table with the recomputed columns.
+#' @noRd
+.hbr_regate_df <- function(dt, alpha, min_cohens_d, require_fdr) {
+  dt <- data.table::as.data.table(data.table::copy(dt))
   if (!"P_value" %in% names(dt))
     stop("summary_table must contain a 'P_value' column", call. = FALSE)
   
@@ -536,10 +687,50 @@ hbr_regate <- function(summary_table, alpha = 0.05, min_cohens_d = 0.5,
   dt[, Significant_FDR := !is.na(Adjusted_P) & Adjusted_P < alpha]
   dt[, Significant_Nominal := !is.na(P_value) & P_value < alpha]
   
-  d_col <- if ("Cohens_d" %in% names(dt)) "Cohens_d" else "Hedges_g"
+  d_col  <- if ("Cohens_d" %in% names(dt)) "Cohens_d" else "Hedges_g"
   eff_ok <- if (d_col %in% names(dt)) dt[[d_col]] >= min_cohens_d else TRUE
   
-  sig_check <- if (require_fdr) dt$Significant_FDR else dt$Significant_Nominal
+  sig_check <- if (require_fdr)
+    dt$Significant_FDR else dt$Significant_Nominal
   dt[, Is_Superior := sig_check & eff_ok]
   dt
+}
+
+#' Print an `hbr_regate` result
+#'
+#' @param x An object of class `hbr_regate`.
+#' @param ... Ignored.
+#' @return `x`, invisibly.
+#' @examples
+#' toy <- system.file("extdata", "hgsi_toy", "trait_YLD",
+#'                    package = "HaploBreedR")
+#' if (nzchar(toy) && dir.exists(toy)) {
+#'   run <- hbr_read_results(toy)
+#'   print(hbr_regate(run, alpha = 0.01))
+#' }
+#' @export
+print.hbr_regate <- function(x, ...) {
+  u <- x$settings$used
+  o <- x$overlap
+  cat(sprintf(
+    "Re-gated (direction %s): alpha %s | min effect %s | ",
+    x$settings$direction, .hbr_fmt(u$alpha), .hbr_fmt(u$min_d)))
+  cat(sprintf("trait threshold %s | FDR %s\n",
+              if (is.finite(u$thr)) u$thr else "none",
+              .hbr_fmt(u$fdr)))
+  cat(sprintf(
+    "  stored call: %d superior | new call: %d superior | Jaccard %s\n",
+    o$n_stored, o$n_new, .hbr_fmt(round(o$jaccard, 3))))
+  if (length(o$gained))
+    cat("  gained:", paste(utils::head(o$gained, 10), collapse = ", "),
+        if (length(o$gained) > 10) "..." else "", "\n")
+  if (length(o$lost))
+    cat("  lost:  ", paste(utils::head(o$lost, 10), collapse = ", "),
+        if (length(o$lost) > 10) "..." else "", "\n")
+  if (!x$check$agrees)
+    cat(sprintf(
+      "  note: the stored settings do not reproduce the stored call ",
+      "for %d gene(s); the table may have been edited.\n",
+      x$check$n_disagree))
+  invisible(x)
 }

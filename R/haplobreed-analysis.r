@@ -708,31 +708,6 @@ haplobreed_analysis <- function(
       cat(sprintf("done (%d direct genes)\n", nrow(candidate_genes)))
   }
 
-  # ----- B.2d Cross-annotation -----
-  if (verbose) cat("[B.2d] Cross-annotation + GO ....... ")
-
-  from_type <- if (toupper(annotation_source) == "MSU7") "MSU" else
-    if (toupper(annotation_source) == "RAPDB") "RAP" else NA_character_
-
-  if (!is.na(from_type)) {
-    to_type   <- if (from_type == "MSU") "RAP" else "MSU"
-    to_prefix <- if (to_type   == "RAP") "RAPDB" else "MSU"
-
-    candidate_genes <- tryCatch(
-      hbr_add_cross_annotation(
-        genes = candidate_genes, id_col = "Gene_ID",
-        from_type = from_type, to_type = to_type,
-        prefix = to_prefix, attach_go = TRUE, verbose = FALSE),
-      error = function(e) {
-        warning("Cross-annotation skipped: ",
-                conditionMessage(e), call. = FALSE)
-        candidate_genes
-      })
-    if (verbose) cat("done\n")
-  } else {
-    if (verbose) cat("skipped (CUSTOM)\n")
-  }
-
   # ----- B.3 Canonicalize genotype (lazy) -----
   if (verbose) cat("[B.3] Genotype canonicalization ...... ")
 

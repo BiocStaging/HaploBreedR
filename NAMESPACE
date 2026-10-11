@@ -2,10 +2,12 @@
 
 S3method(plot,hbr_run)
 S3method(plot,hgsi_advanced)
+S3method(print,hbr_blocks)
 S3method(print,hbr_compat_report)
 S3method(print,hbr_genotype)
 S3method(print,hbr_id_report)
 S3method(print,hbr_reference)
+S3method(print,hbr_regate)
 S3method(print,hbr_run)
 S3method(print,hbr_sequence_qc)
 S3method(print,hgsi_advanced)

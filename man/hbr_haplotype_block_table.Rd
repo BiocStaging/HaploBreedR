@@ -26,60 +26,42 @@ hbr_haplotype_block_table(
 )
 }
 \arguments{
-\item{plink_prefix}{Character. PLINK file prefix. Required by the
-SNP-level methods (`"fourgamete"`, `"gabriel"`) and their combinations;
-ignored otherwise.}
+\item{plink_prefix}{PLINK prefix, or an `hbr_run` object (in which
+case the run-level API is used). When the first positional
+argument is an `hbr_run`, this argument receives it.}
 
-\item{units}{Data.frame with columns `chr` and `cm`, and optionally
-`snp_col` (PLINK column index of the locus's own SNP, needed by
-`"fourgamete"` and `"gabriel"`).}
+\item{units}{Low-level API: data.frame with `chr` and `cm` per
+target locus, and `snp_col` when using the SNP-level methods.
+Alternatively, an `hbr_run` object (in which case the run-level
+API is used).}
 
-\item{cm_snp}{Numeric vector of genetic positions per SNP in the PLINK
-file. Required by the SNP-level methods.}
-
-\item{chr_snp}{Character vector of chromosomes per SNP in the PLINK
-file. Required by the SNP-level methods.}
+\item{cm_snp, chr_snp}{Low-level API: genetic positions and
+chromosomes of every SNP in the PLINK file.}
 
 \item{traits}{Optional character vector (one per row of `units`) of the
 trait(s) each locus belongs to. When `units` already carries a `traits`
 column, that is used instead.}
 
-\item{method}{Block method, one of `"recomb"`, `"ld"`, `"either"`,
-`"fourgamete"`, `"gabriel"`, `"recomb+gabriel"`, `"recomb+fourgamete"`.}
+\item{method}{One of the seven methods above.}
 
-\item{flank_cM}{Numeric. Window (+/- cM) around each cluster of target
-loci from which SNPs are read, for SNP-level methods.}
+\item{flank_cM, max_snps, min_gamete}{SNP-level methods only: window
+around the genes, SNPs kept per cluster, and gamete frequency that
+counts as recombination.}
 
-\item{max_snps}{Integer. Maximum SNPs per cluster after thinning.}
+\item{max_span_cM}{Largest distance between the first and last locus
+of a block.}
 
-\item{max_span_cM}{Numeric. Largest distance between the first and last
-locus of a block (cM). Chaining cannot build blocks longer than this.}
+\item{maf_min}{Minimum minor-allele frequency.}
 
-\item{min_gamete}{Numeric. Four-gamete frequency that counts as evidence
-of recombination (Haploview default 0.01).}
+\item{rmax}{Maximum Haldane recombination fraction between
+neighbours for `"recomb"`.}
 
-\item{maf_min}{Numeric. Minimum minor allele frequency for a SNP to
-enter the block search.}
+\item{r2}{Minimum carrier-indicator r-squared for `"ld"`.}
 
-\item{rmax}{Numeric. Maximum recombination fraction between
-neighbouring loci for `"recomb"` and `"either"` (default 0.01, about
-1 cM).}
+\item{ld_max_cM}{Largest distance over which LD may join neighbours.}
 
-\item{r2}{Numeric. Minimum r^2 of carrier indicators to join neighbours
-under `"ld"` and `"either"`.}
-
-\item{ld_max_cM}{Numeric. Largest distance over which LD may join
-neighbours (cM).}
-
-\item{r2_min}{Numeric. Reserved for a future version; currently not
-wired into the SNP-level block callers (the four-gamete rule and the
-full Gabriel D' test are applied directly to every pair).}
-
-\item{gabriel_grid}{Integer. Reserved for a future version; currently
-not wired into the SNP-level block callers.}
-
-\item{carry}{Logical matrix individuals x target loci. Required by
-`"ld"` and `"either"`; ignored otherwise.}
+\item{r2_min, gabriel_grid, carry}{Reserved for future versions; kept
+for backward compatibility with the low-level API.}
 }
 \value{
 A list with `blocks` (the summary table) and `assignment`

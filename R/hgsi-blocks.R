@@ -359,65 +359,107 @@
        snp_clusters = clusters)
 }
 
-#' Standalone Haplotype Block Calling
+#' Haplotype blocks of target loci
 #'
-#' Partitions a set of target loci into haplotype blocks by any of the
-#' methods the pipeline uses: map-based recombination between the loci
-#' (`"recomb"`), LD between their carrier indicators (`"ld"`), the union of
-#' both (`"either"`), SNP-level methods around each target cluster
-#' (`"fourgamete"`, `"gabriel"`), or the union of a map method and an
-#' SNP method (`"recomb+gabriel"`, `"recomb+fourgamete"`). Blocks never span
-#' chromosomes and never exceed `max_span_cM`.
+#' Groups a set of target loci into haplotype blocks by one of seven
+#' methods and reports the block assignment. Two calling conventions
+#' are supported.
 #'
-#' @param plink_prefix Character. PLINK file prefix. Required by the
-#'   SNP-level methods (`"fourgamete"`, `"gabriel"`) and their combinations;
-#'   ignored otherwise.
-#' @param units Data.frame with columns `chr` and `cm`, and optionally
-#'   `snp_col` (PLINK column index of the locus's own SNP, needed by
-#'   `"fourgamete"` and `"gabriel"`).
-#' @param cm_snp Numeric vector of genetic positions per SNP in the PLINK
-#'   file. Required by the SNP-level methods.
-#' @param chr_snp Character vector of chromosomes per SNP in the PLINK
-#'   file. Required by the SNP-level methods.
-#' @param method Block method, one of `"recomb"`, `"ld"`, `"either"`,
-#'   `"fourgamete"`, `"gabriel"`, `"recomb+gabriel"`, `"recomb+fourgamete"`.
-#' @param flank_cM Numeric. Window (+/- cM) around each cluster of target
-#'   loci from which SNPs are read, for SNP-level methods.
-#' @param max_snps Integer. Maximum SNPs per cluster after thinning.
-#' @param max_span_cM Numeric. Largest distance between the first and last
-#'   locus of a block (cM). Chaining cannot build blocks longer than this.
-#' @param min_gamete Numeric. Four-gamete frequency that counts as evidence
-#'   of recombination (Haploview default 0.01).
-#' @param maf_min Numeric. Minimum minor allele frequency for a SNP to
-#'   enter the block search.
-#' @param rmax Numeric. Maximum recombination fraction between
-#'   neighbouring loci for `"recomb"` and `"either"` (default 0.01, about
-#'   1 cM).
-#' @param r2 Numeric. Minimum r^2 of carrier indicators to join neighbours
-#'   under `"ld"` and `"either"`.
-#' @param ld_max_cM Numeric. Largest distance over which LD may join
-#'   neighbours (cM).
-#' @param r2_min Numeric. Reserved for a future version; currently not
-#'   wired into the SNP-level block callers (the four-gamete rule and the
-#'   full Gabriel D' test are applied directly to every pair).
-#' @param gabriel_grid Integer. Reserved for a future version; currently
-#'   not wired into the SNP-level block callers.
-#' @param carry Logical matrix individuals x target loci. Required by
-#'   `"ld"` and `"either"`; ignored otherwise.
+#' **Low-level.** Supply `plink_prefix`, `units`, `cm_snp` and
+#' `chr_snp` directly. `units` must carry `chr`, `cm` and (for the
+#' SNP-level methods) `snp_col`; `cm_snp` and `chr_snp` give the
+#' genetic and physical position of every SNP in the PLINK file. The
+#' function returns an integer vector of block IDs per row of `units`.
+#' This is the legacy API and is fully backward compatible.
 #'
-#' @return Integer vector of block IDs per target locus, with attribute
-#'   `"clusters"` giving the SNP windows used by SNP-level methods (or
-#'   `NULL`).
+#' **Run-level.** Pass an `hbr_run` (from [hbr_read_results()]) as the
+#' first positional argument or as `plink_prefix`. The function reads
+#' the superior haplotypes, rebuilds the codes, replays the discovery
+#' gate to pick the best haplotype per gene, places each at its
+#' genetic map position, and returns a classed `hbr_blocks` object
+#' with the block table, the per-line carrier matrix, and (for
+#' SNP-level methods) the SNP windows used.
+#'
+#' @details
+#' The seven block methods are:
+#' \describe{
+#'   \item{`"recomb"`}{Join neighbours whose Haldane recombination
+#'     fraction is at most `rmax`. Describes the recombination
+#'     expected in a new cross.}
+#'   \item{`"ld"`}{Join neighbours whose carrier indicators have
+#'     r-squared at least `r2` within `ld_max_cM`. Describes LD in the
+#'     panel.}
+#'   \item{`"either"`}{Union of `"recomb"` and `"ld"`.}
+#'   \item{`"fourgamete"`}{Four-gamete rule on the SNPs around the
+#'     genes (Wang et al. 2002; Haploview default).}
+#'   \item{`"gabriel"`}{Gabriel-type D-prime confidence intervals
+#'     (Gabriel et al. 2002).}
+#'   \item{`"recomb+gabriel"`}{Union of `"recomb"` and `"gabriel"`,
+#'     then capped at `max_span_cM`.}
+#'   \item{`"recomb+fourgamete"`}{Union of `"recomb"` and
+#'     `"fourgamete"`, then capped.}
+#' }
+#' Blocks never span chromosomes. `"recomb"`, `"ld"` and `"either"`
+#' operate on the loci directly; the SNP-level methods read a window
+#' of `flank_cM` around each cluster of target genes.
+#'
+#' @param plink_prefix PLINK prefix, or an `hbr_run` object (in which
+#'   case the run-level API is used). When the first positional
+#'   argument is an `hbr_run`, this argument receives it.
+#' @param units Low-level API: data.frame with `chr` and `cm` per
+#'   target locus, and `snp_col` when using the SNP-level methods.
+#'   Alternatively, an `hbr_run` object (in which case the run-level
+#'   API is used).
+#' @param cm_snp,chr_snp Low-level API: genetic positions and
+#'   chromosomes of every SNP in the PLINK file.
+#' @param method One of the seven methods above.
+#' @param flank_cM,max_snps,min_gamete SNP-level methods only: window
+#'   around the genes, SNPs kept per cluster, and gamete frequency that
+#'   counts as recombination.
+#' @param maf_min Minimum minor-allele frequency.
+#' @param rmax Maximum Haldane recombination fraction between
+#'   neighbours for `"recomb"`.
+#' @param r2 Minimum carrier-indicator r-squared for `"ld"`.
+#' @param ld_max_cM Largest distance over which LD may join neighbours.
+#' @param max_span_cM Largest distance between the first and last locus
+#'   of a block.
+#' @param r2_min,gabriel_grid,carry Reserved for future versions; kept
+#'   for backward compatibility with the low-level API.
+#' @param genetic_map,cM_per_Mb Genetic positions for the run-level API:
+#'   a data.frame with `chr`, `bp`, `cm` (for example
+#'   [hbr_rice_genetic_map()]), or a constant rate. A `.bim` with an
+#'   informative cM column is used when neither is supplied.
+#' @param verbose Print progress.
+#'
+#' @return For the low-level API, an integer vector of block IDs per
+#'   row of `units`. For the run-level API, an object of class
+#'   `hbr_blocks` with elements `blocks`, `units`, `lines`, `full`,
+#'   `snp_clusters`, `settings` and `map_source`.
+#'
+#' @seealso [hbr_read_results()] to build the run input,
+#'   [hbr_haplotype_block_table()] for the legacy low-level wrapper.
 #'
 #' @examples
+#' # Legacy low-level API — no genotypes needed for the map methods
 #' units <- data.frame(chr = c("1", "1", "1", "2", "2"),
 #'                     cm  = c(10, 10.5, 50, 5, 5.2))
 #' hbr_haplotype_blocks(method = "recomb", units = units)
 #'
+#' # Run-level API on the bundled toy data
+#' toy <- system.file("extdata", "hgsi_toy", package = "HaploBreedR")
+#' if (nzchar(toy) && dir.exists(toy) &&
+#'     requireNamespace("BEDMatrix", quietly = TRUE)) {
+#'   run <- hbr_read_results(file.path(toy, "trait_YLD"))
+#'   blk <- hbr_haplotype_blocks(
+#'     run, plink_prefix = file.path(toy, "geno_toy"),
+#'     method = "recomb")
+#'   blk$blocks
+#' }
+#'
 #' @export
 hbr_haplotype_blocks <- function(
     plink_prefix  = NULL,
-    units,
+    units         = NULL,
     cm_snp        = NULL,
     chr_snp       = NULL,
     method        = c("recomb", "ld", "either",
@@ -433,11 +475,191 @@ hbr_haplotype_blocks <- function(
     ld_max_cM     = 3,
     r2_min        = 0.25,
     gabriel_grid  = 21L,
-    carry         = NULL) {
-
+    carry         = NULL,
+    genetic_map   = NULL,
+    cM_per_Mb     = NULL,
+    verbose       = FALSE) {
+  
   method <- match.arg(method)
+  
+  # ---- Detect run-level call ---------------------------------------------
+  # R's argument matching puts a positional run object in the *first*
+  # unused formal, which may be `units` when `plink_prefix` is supplied
+  # by name. Check both positions.
+  run_input <- NULL
+  if (inherits(plink_prefix, "hbr_run")) {
+    run_input <- plink_prefix
+    plink_prefix <- NULL
+  } else if (inherits(units, "hbr_run")) {
+    run_input <- units
+    units <- NULL
+  }
+  
+  if (!is.null(run_input)) {
+    return(.hbr_haplotype_blocks_run(
+      run_input,
+      plink_prefix = plink_prefix,
+      genetic_map  = genetic_map,
+      cM_per_Mb    = cM_per_Mb,
+      method       = method,
+      rmax         = rmax,
+      r2           = r2,
+      ld_max_cM    = ld_max_cM,
+      max_span_cM  = max_span_cM,
+      flank_cM     = flank_cM,
+      max_snps     = max_snps,
+      min_gamete   = min_gamete,
+      maf_min      = maf_min,
+      verbose      = verbose))
+  }
+  
+  # ---- Legacy path -------------------------------------------------------
+  .hbr_haplotype_blocks_legacy(
+    plink_prefix, units, cm_snp, chr_snp, method,
+    flank_cM, max_snps, max_span_cM, min_gamete, maf_min,
+    rmax, r2, ld_max_cM, r2_min, gabriel_grid, carry)
+}
 
-  # --- Validate units -----------------------------------------------------
+
+#' Run-level haplotype-block calling
+#'
+#' Internal worker for the run-level branch of
+#' [hbr_haplotype_blocks()]. Reads a pipeline run (or list of runs),
+#' rebuilds the superior-haplotype codes, replays the discovery gate,
+#' and groups the target loci into blocks. Called only from
+#' [hbr_haplotype_blocks()].
+#'
+#' @param x An `hbr_run`, a named list of them, or anything
+#'   [hbr_read_results()] takes.
+#' @param plink_prefix PLINK prefix; defaults to the run's stored prefix.
+#' @param genetic_map,cM_per_Mb Genetic positions.
+#' @param method Block method.
+#' @param rmax,r2,ld_max_cM,max_span_cM,flank_cM,max_snps,min_gamete
+#'   Block settings.
+#' @param maf_min Minimum minor-allele frequency.
+#' @param verbose Print progress.
+#' @return An object of class `hbr_blocks`.
+#' @noRd
+.hbr_haplotype_blocks_run <- function(
+    x, plink_prefix, genetic_map, cM_per_Mb, method,
+    rmax, r2, ld_max_cM, max_span_cM, flank_cM, max_snps,
+    min_gamete, maf_min, verbose) {
+  
+  runs <- .hbr_as_runs(x)
+  if (is.null(plink_prefix) || !nzchar(plink_prefix))
+    plink_prefix <- runs[[1]]$plink_prefix
+  if (is.null(plink_prefix) || !nzchar(plink_prefix) ||
+      !file.exists(paste0(plink_prefix, ".fam")))
+    stop("`plink_prefix` is not set on the run and not supplied as an ",
+         "argument (or does not point to an existing .fam file): ",
+         if (is.null(plink_prefix)) "<NULL>" else plink_prefix,
+         call. = FALSE)
+  
+  fam <- data.table::fread(paste0(plink_prefix, ".fam"),
+                           header = FALSE, data.table = FALSE)
+  ids <- hbr_clean_id(fam$V2)
+  n   <- length(ids)
+  bim <- .hgsi_read_bim(plink_prefix)
+  gpos <- .hgsi_genetic_pos(bim, cM_per_Mb, genetic_map)
+  if (is.null(gpos))
+    stop("blocks need genetic positions: give `genetic_map`, ",
+         "`cM_per_Mb`, or a .bim with a cM column", call. = FALSE)
+  
+  sup_tabs   <- list()
+  codes_l    <- list()
+  gene_first <- list()
+  
+  for (tr in names(runs)) {
+    ld  <- runs[[tr]]
+    sup <- intersect(ld$superior, names(ld$gene_snps))
+    if (!length(sup)) {
+      sup_tabs[[tr]] <- data.frame(gene = character(),
+                                   hap = character())
+      next
+    }
+    codes <- .hgsi_build_codes(plink_prefix, ld$gene_snps[sup], ids,
+                               bim$snp, maf_min = ld$gate$maf_min,
+                               verbose = verbose)
+    codes <- .hgsi_relabel_codes(codes, ids, ld)
+    y <- rep(NA_real_, n)
+    j <- match(ids, ld$phenotype$ID)
+    y[!is.na(j)] <- ld$phenotype$y[j[!is.na(j)]]
+    pcs <- if (is.null(ld$pcs)) NULL else
+      as.matrix(ld$pcs[match(ids, ld$pcs$ID), ld$pc_cols, drop = FALSE])
+    gt <- .hgsi_gate_fold(codes, y, which(!is.na(y)), ld$gate, pcs)
+    sup_tabs[[tr]] <- data.frame(
+      gene = sup,
+      hap  = gt$best_hap[match(sup, gt$gene)],
+      stringsAsFactors = FALSE)
+    codes_l[[tr]] <- codes
+    for (g in sup) if (is.null(gene_first[[g]])) {
+      ii <- stats::na.omit(match(ld$gene_snps[[g]], bim$snp))
+      if (length(ii)) gene_first[[g]] <- ii[1]
+    }
+  }
+  
+  if (!length(gene_first))
+    stop("no superior gene with SNPs in the PLINK file", call. = FALSE)
+  
+  gene_chr <- vapply(gene_first, function(i) bim$chr[i], character(1))
+  gene_cm  <- vapply(gene_first, function(i) gpos$cm[i], numeric(1))
+  
+  tgt <- .hgsi_target_blocks(
+    sup_tabs, codes_l, ids, gene_chr, gene_cm, gene_first,
+    plink_prefix, gpos$cm, bim$chr, method, rmax, r2,
+    ld_max_cM, max_span_cM, flank_cM, max_snps, min_gamete,
+    grm = NULL, maf_min = maf_min)
+  if (is.null(tgt))
+    stop("no superior haplotype with a map position", call. = FALSE)
+  
+  full <- tgt$full
+  colnames(full) <- tgt$blocks$block
+  rownames(full) <- ids
+  
+  units_out <- tgt$units
+  units_out$block   <- sprintf("HB%03d", tgt$block)
+  units_out$snp_col <- NULL
+  
+  structure(list(
+    blocks = tgt$blocks,
+    units  = units_out,
+    lines  = data.frame(
+      id = ids,
+      n_blocks_full    = rowSums(tgt$full),
+      n_blocks_partial = rowSums(tgt$partial),
+      n_blocks_target  = ncol(tgt$full),
+      stringsAsFactors = FALSE),
+    full = full,
+    snp_clusters = tgt$snp_clusters,
+    settings = list(method = method, rmax = rmax, r2 = r2,
+                    ld_max_cM = ld_max_cM, max_span_cM = max_span_cM,
+                    flank_cM = flank_cM, max_snps = max_snps,
+                    min_gamete = min_gamete),
+    map_source = gpos$source),
+    class = "hbr_blocks")
+}
+
+
+#' Legacy low-level haplotype-block calling
+#'
+#' The original body of `hbr_haplotype_blocks()` before it became
+#' polymorphic. Called by [hbr_haplotype_blocks()] and by
+#' [hbr_haplotype_block_table()].
+#'
+#' @param plink_prefix PLINK prefix.
+#' @param units Data.frame with `chr`, `cm` and optionally `snp_col`.
+#' @param cm_snp,chr_snp Genetic position and chromosome per SNP.
+#' @param method Block method.
+#' @param flank_cM,max_snps,max_span_cM,min_gamete,maf_min Block settings.
+#' @param rmax,r2,ld_max_cM Block thresholds.
+#' @param r2_min,gabriel_grid,carry Reserved.
+#' @return Integer block IDs per row of `units`.
+#' @noRd
+.hbr_haplotype_blocks_legacy <- function(
+    plink_prefix, units, cm_snp, chr_snp, method,
+    flank_cM, max_snps, max_span_cM, min_gamete, maf_min,
+    rmax, r2, ld_max_cM, r2_min, gabriel_grid, carry) {
+  
   if (!is.data.frame(units) && !data.table::is.data.table(units))
     stop("`units` must be a data.frame.", call. = FALSE)
   need <- c("chr", "cm")
@@ -447,12 +669,11 @@ hbr_haplotype_blocks <- function(
          call. = FALSE)
   units <- as.data.frame(units)
   if (nrow(units) == 0L) return(integer(0))
-
-  # --- Determine what the chosen method needs -----------------------------
+  
   uses_snp <- method %in% c("fourgamete", "gabriel",
                             "recomb+gabriel", "recomb+fourgamete")
   uses_ld  <- method %in% c("ld", "either")
-
+  
   if (uses_snp) {
     if (is.null(plink_prefix) || !nzchar(plink_prefix))
       stop("Method '", method, "' needs `plink_prefix`.", call. = FALSE)
@@ -460,18 +681,16 @@ hbr_haplotype_blocks <- function(
       stop("Method '", method, "' needs `cm_snp` and `chr_snp`.",
            call. = FALSE)
     if (!"snp_col" %in% names(units))
-      stop("Method '", method, "' needs `units$snp_col` ",
-           "(PLINK column of each locus's own SNP).", call. = FALSE)
+      stop("Method '", method, "' needs `units$snp_col`.",
+           call. = FALSE)
   }
   if (uses_ld && is.null(carry))
-    stop("Method '", method, "' needs a `carry` matrix of individuals ",
-         "by target loci (ncol = nrow(units)); pass `carry =` or use a ",
-         "method that does not require LD.", call. = FALSE)
+    stop("Method '", method, "' needs a `carry` matrix.",
+         call. = FALSE)
   if (uses_ld && ncol(carry) != nrow(units))
     stop("`carry` has ", ncol(carry), " columns but `units` has ",
          nrow(units), " rows.", call. = FALSE)
-
-  # --- Dispatch ------------------------------------------------------------
+  
   if (method %in% c("recomb", "ld", "either")) {
     return(.hgsi_define_blocks(
       chr = units$chr, cm = units$cm,
@@ -480,44 +699,66 @@ hbr_haplotype_blocks <- function(
       rmax = rmax, r2_min = r2, ld_max_cM = ld_max_cM,
       max_span_cM = max_span_cM))
   }
-
+  
   if (method %in% c("fourgamete", "gabriel")) {
-    out <- .hgsi_units_snp_blocks(
-      plink_prefix = plink_prefix,
-      units        = units,
-      cm_snp       = cm_snp,
-      chr_snp      = chr_snp,
-      method       = method,
-      flank_cM     = flank_cM,
-      max_snps     = max_snps,
-      max_span_cM  = max_span_cM,
-      min_gamete   = min_gamete,
-      maf_min      = maf_min)
-    return(out)
+    return(.hgsi_units_snp_blocks(
+      plink_prefix = plink_prefix, units = units,
+      cm_snp = cm_snp, chr_snp = chr_snp, method = method,
+      flank_cM = flank_cM, max_snps = max_snps,
+      max_span_cM = max_span_cM, min_gamete = min_gamete,
+      maf_min = maf_min))
   }
-
-  # --- Combinations: recomb + (gabriel | fourgamete) ----------------------
+  
   snp_method <- sub("^recomb\\+", "", method)
   b_map <- .hgsi_define_blocks(
-    chr = units$chr, cm = units$cm, carry = NULL,
-    method = "recomb",
+    chr = units$chr, cm = units$cm, carry = NULL, method = "recomb",
     rmax = rmax, r2_min = r2, ld_max_cM = ld_max_cM,
     max_span_cM = max_span_cM)
   b_snp <- .hgsi_units_snp_blocks(
-    plink_prefix = plink_prefix,
-    units        = units,
-    cm_snp       = cm_snp,
-    chr_snp      = chr_snp,
-    method       = snp_method,
-    flank_cM     = flank_cM,
-    max_snps     = max_snps,
-    max_span_cM  = max_span_cM,
-    min_gamete   = min_gamete,
-    maf_min      = maf_min)
+    plink_prefix = plink_prefix, units = units,
+    cm_snp = cm_snp, chr_snp = chr_snp, method = snp_method,
+    flank_cM = flank_cM, max_snps = max_snps,
+    max_span_cM = max_span_cM, min_gamete = min_gamete,
+    maf_min = maf_min)
   merged <- .hgsi_merge_blocks(b_map, as.integer(b_snp))
   capped <- .hgsi_cap_span(merged, units$chr, units$cm, max_span_cM)
   attr(capped, "clusters") <- attr(b_snp, "clusters")
   capped
+}
+
+
+#' Print an `hbr_blocks` result
+#'
+#' @param x An object of class `hbr_blocks`.
+#' @param ... Ignored.
+#' @return `x`, invisibly.
+#' @examples
+#' toy <- system.file("extdata", "hgsi_toy", package = "HaploBreedR")
+#' if (nzchar(toy) && dir.exists(toy) &&
+#'     requireNamespace("BEDMatrix", quietly = TRUE)) {
+#'   run <- hbr_read_results(file.path(toy, "trait_YLD"))
+#'   print(hbr_haplotype_blocks(
+#'     run, plink_prefix = file.path(toy, "geno_toy"),
+#'     method = "recomb"))
+#' }
+#' @export
+print.hbr_blocks <- function(x, ...) {
+  cat(sprintf("%d target haplotypes in %d blocks (method %s; map: %s)\n",
+              nrow(x$units), nrow(x$blocks), x$settings$method,
+              x$map_source))
+  print(utils::head(x$blocks[, intersect(
+    c("block", "chr", "start_cM", "end_cM", "n_genes", "panel_freq"),
+    names(x$blocks))], 15), row.names = FALSE)
+  if (nrow(x$blocks) > 15) cat("  ... see $blocks\n")
+  sizes <- table(factor(pmin(x$blocks$n_target_haplotypes, 5L),
+                        levels = 1:5,
+                        labels = c("1", "2", "3", "4", "5+")))
+  cat("  target haplotypes per block:",
+      paste(names(sizes), sizes, sep = ": ", collapse = " | "), "\n")
+  cl <- x$snp_clusters
+  if (!is.null(cl))
+    cat(sprintf("  SNP-level windows: %d\n", nrow(cl)))
+  invisible(x)
 }
 
 

@@ -13,7 +13,7 @@ Description:An end-to-end quantitative genomics and molecular breeding suite
     genomic selection, analytical cross usefulness prediction, and linkage-aware 
     pyramiding optimization.
 License: MIT + file LICENSE
-URL: https://github.com/aksruchi/HaploBreedR
+URL: https://aksruchi.github.io/HaploBreedR
 BugReports: https://github.com/aksruchi/HaploBreedR/issues
 Encoding: UTF-8
 Depends:
@@ -46,7 +46,6 @@ Suggests:
     ggbeeswarm (>= 0.7),
     openxlsx (>= 4.2),
     readxl (>= 1.4),
-    AnnotationDbi (>= 1.60.0),
     BiocFileCache (>= 2.6.0),
     BiocStyle (>= 2.26.0),
     knitr (>= 1.40),

@@ -16,6 +16,7 @@
 ^Meta$
 ^docs$
 ^data-raw$
+^HaploBreedR\.BiocCheck$
 ^pkgdown$
 ^_pkgdown\.yml$
 ^HaploBreedR_pkgdown\.yml$

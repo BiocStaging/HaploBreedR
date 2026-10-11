@@ -2,32 +2,80 @@
 % Please edit documentation in R/hgsi-cross.R
 \name{hbr_cross_plan}
 \alias{hbr_cross_plan}
-\title{Interactive Cross Query Planning}
+\title{Plan a cross between named parents}
 \usage{
-hbr_cross_plan(decision_obj, parent_a, parent_b, mating = c("DH", "RIL"))
+hbr_cross_plan(
+  x,
+  parent_a,
+  parent_b = NULL,
+  mating = c("DH", "RIL"),
+  conf = 0.95
+)
 }
 \arguments{
-\item{decision_obj}{An \code{hgsi_advanced} object from [hbr_advanced_decision()].}
+\item{x}{A result of [hbr_advanced_decision()] that was run with a
+genetic map (so `x$target` is populated).}
 
-\item{parent_a}{Character. ID of the first parent.}
+\item{parent_a}{Line IDs. When `parent_b` is `NULL`, all pairs
+among `parent_a` are planned.}
 
-\item{parent_b}{Character. ID of the second parent.}
+\item{parent_b}{Optional line IDs, same length as `parent_a`.}
 
-\item{mating}{Character. "DH" (Doubled Haploids) or "RIL" (Recombinant Inbred Lines).}
+\item{mating}{`"DH"` or `"RIL"` (RIL by selfing) for the linked
+probability.}
+
+\item{conf}{Confidence for the number of plants. Default `0.95`.}
 }
 \value{
-A list detailing block states, DH/RIL pyramiding probabilities,
-  and Sedcole (1977) N95 plant population requirements.
+A data.frame with one row per cross, columns `parent_a`,
+  `parent_b`, `mid_index`, `n_blocks_fixed`, `n_blocks_segregating`,
+  `n_blocks_split`, `n_blocks_incomplete`, `n_blocks_covered`,
+  `n_blocks_target`, `p_pyramid_DH` or `p_pyramid_RIL`,
+  `p_pyramid_F2_hom`, `plants_needed`, and, when available,
+  `sd_index` and `uc`.
 }
 \description{
-Evaluates target haplotype block coverage, pyramiding probabilities, and
-population sizing requirements for a specific user-named cross combination.
+For any pair of parents in a [hbr_advanced_decision()] result — not
+only the top-ranked crosses — reports which haplotype blocks are
+fixed, segregating, split between the parents (a recombinant is
+needed) or missing, the exact probability that a doubled-haploid
+progeny carries every segregating target haplotype, the F2
+probabilities, and the number of plants needed to recover at least
+one carrier with the requested confidence.
+}
+\details{
+The DH probability is computed at the gene level with Haldane's map
+function, so linkage in coupling or repulsion enters exactly. F2
+probabilities ignore linkage and count one locus per segregating
+block or per differing gene of a split block. Plant numbers solve
+`1 - (1 - p)^N >= conf` (Sedcole 1977). The mid-parent index uses
+the result's multi-trait index (larger is better in the pipeline's
+direction). Usefulness and progeny SD are reported only for pairs
+that were computed in the result.
 }
 \examples{
-dec <- structure(
-  list(ids = c("A", "B"),
-       blocks = data.frame(block = "HB001", chr = "1",
-                           start_cM = 10, end_cM = 12)),
+# A minimal hgsi_advanced stub, sufficient for planning only
+res <- structure(list(
+  ids    = c("A", "B", "C"),
+  index  = c(1.0, 0.8, 0.6),
+  crosses = data.frame(parent_a = "A", parent_b = "B",
+                       uc = 1.5, sd_index = 0.4),
+  target = list(
+    carry = matrix(c(TRUE, FALSE, TRUE, FALSE, TRUE, TRUE),
+                   nrow = 3, ncol = 2,
+                   dimnames = list(c("A", "B", "C"),
+                                   c("GENE01", "GENE02"))),
+    block = c(1L, 1L),
+    units = data.frame(gene = c("GENE01", "GENE02"),
+                       chr  = c("1", "1"),
+                       cm   = c(10, 10.5),
+                       stringsAsFactors = FALSE))),
   class = "hgsi_advanced")
-hbr_cross_plan(dec, "A", "B")
+hbr_cross_plan(res, "A", "B")
+hbr_cross_plan(res, c("A", "B"), c("B", "C"))
+
+}
+\seealso{
+[hbr_advanced_decision()], [hbr_pyramid_probability()],
+  [hbr_population_size()].
 }

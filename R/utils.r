@@ -774,3 +774,16 @@ hbr_rice_genetic_map_summary <- function() {
     source     = attr(m, "source"),
     stringsAsFactors = FALSE)
 }
+
+#' Format a scalar for printing
+#'
+#' Returns the first element as a character string, or `"NA"` when the
+#' value is `NULL`, zero-length, or `NA`. Internal helper used by the
+#' print methods of the classed pipeline objects.
+#'
+#' @param v Any scalar value.
+#' @return A character scalar.
+#' @noRd
+.hbr_fmt <- function(v) {
+  if (is.null(v) || !length(v) || is.na(v[1])) "NA" else as.character(v[1])
+}

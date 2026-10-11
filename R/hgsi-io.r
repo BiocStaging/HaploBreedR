@@ -601,30 +601,150 @@ hbr_gene_carriers <- function(x, trait, gene,
        trait              = trait)
 }
 
-#' Read HaploBreedR Pipeline Results from Disk
+#' Load one HaploBreedR run into an `hbr_run` object
 #'
-#' Ingests completed single-trait or multi-trait pipeline output directories
-#' into memory as classed objects for visualization or genomic selection.
+#' Internal worker shared by [hbr_read_results()]. Reads the pipeline
+#' summary, the tested-gene table and the trait table for a single run
+#' and assembles them into a classed object.
 #'
-#' @param path Character. Path to a single trait output directory.
-#' @param traits Optional named character vector of output directories for multi-trait loading.
+#' @param x A [haplobreed_analysis()] result or a pipeline output
+#'   directory.
+#' @param trait Trait label; default the pipeline's `Trait`.
+#' @param phenotypes Optional wide data.frame (ID, trait, PC columns).
+#' @param phenotype_id_col ID column of `phenotypes`.
+#' @param gate_params Optional override list for the gate settings.
+#' @return An object of class `hbr_run` (a list).
+#' @noRd
+.hbr_read_one <- function(x, trait, phenotypes, phenotype_id_col,
+                          gate_params) {
+  is_dir <- is.character(x) && length(x) == 1L
+  pr   <- if (is_dir) NULL else x
+  pdir <- if (is_dir) x else NULL
+  ps <- .hgsi_read_summary(pr, pdir)
+  nm <- if (is.null(trait)) as.character(ps$Trait[1]) else trait
+  ld <- .hgsi_load_trait(nm, pr, pdir, phenotypes, phenotype_id_col,
+                         gate_params, verbose = FALSE)
+  tt <- .hgsi_read_tested(pr, ld$out_dir, ps)
+  ld$table            <- tt$table
+  ld$table_source     <- tt$source
+  ld$summary          <- ps
+  ld$pipeline_summary <- ps
+  class(ld) <- c("hbr_run", "list")
+  ld
+}
+
+#' Normalise a run input to a named list of `hbr_run` objects
 #'
-#' @return An object of class \code{hbr_run} (single trait) or \code{hbr_run_list} (multi-trait).
+#' Accepts a single `hbr_run`, a named list of them, or anything
+#' [hbr_read_results()] takes. Used by [hbr_haplotype_blocks()] and
+#' [hbr_regate()].
+#'
+#' @param x An `hbr_run`, a named list of them, or a loadable run input.
+#' @param ... Passed to [hbr_read_results()].
+#' @return A named list of `hbr_run` objects.
+#' @noRd
+.hbr_as_runs <- function(x, ...) {
+  if (inherits(x, "hbr_run")) return(stats::setNames(list(x), x$trait))
+  if (is.list(x) && length(x) &&
+      all(vapply(x, inherits, logical(1), "hbr_run")))
+    return(x)
+  r <- hbr_read_results(x, ...)
+  if (inherits(r, "hbr_run")) stats::setNames(list(r), r$trait) else r
+}
+
+#' Read finished HaploBreedR results from disk or memory
+#'
+#' Loads the output of [haplobreed_analysis()] — either the in-memory
+#' result or its output directory — into one object that carries the
+#' trait direction, the effective gate settings, the PCs the run
+#' adjusted for (none if it used no PCs), the tested and superior gene
+#' lists, the functional SNPs per gene, the phenotype table, and the
+#' publication-style results table. [hbr_advanced_decision()],
+#' [hbr_regate()] and [hbr_haplotype_blocks()] consume runs the same
+#' way.
+#'
+#' A single pipeline directory or result returns one `hbr_run`. A
+#' named character vector of directories or a named list of results
+#' returns one `hbr_run` per element, classed as `hbr_run_list`.
+#'
+#' @param x A [haplobreed_analysis()] result, a pipeline output
+#'   directory, a named character vector of directories, or a named
+#'   list of results. **Alternatively**, the legacy arguments `path`
+#'   and `traits` (see below) are still honoured.
+#' @param trait Trait label; default the pipeline's stored `Trait`.
+#' @param phenotypes Optional wide data.frame (ID column plus one
+#'   column per trait, plus PC columns if the run used PCs). Needed
+#'   only when the run used PCs and is read from files, because
+#'   `phenotype_data_used.csv` does not carry the PC columns.
+#' @param phenotype_id_col ID column of `phenotypes`. Default `"ID"`.
+#' @param gate_params Optional named list overriding the stored gate
+#'   settings (`alpha`, `min_d`, `min_ind`, `min_hap_freq`, `maf_min`,
+#'   `trait_threshold`, `require_fdr`, `hedges`). Unspecified entries
+#'   keep the values stored by the pipeline.
+#' @param path Legacy alias: a single pipeline output directory.
+#' @param traits Legacy alias: a named character vector of pipeline
+#'   output directories, one element per trait.
+#'
+#' @return An object of class `hbr_run` (a list), or a named list of
+#'   them classed as `hbr_run_list`. Elements of a run:
+#'   \describe{
+#'     \item{`trait`, `direction`, `mode`}{run identity and the trait
+#'       direction (`"higher"` or `"lower"`)}
+#'     \item{`gate`}{effective gate settings}
+#'     \item{`phenotype`, `pcs`, `pc_cols`}{trait table and PC columns}
+#'     \item{`gene_snps`}{functional SNPs per tested gene}
+#'     \item{`tested`, `superior`, `superior_label`}{gene lists}
+#'     \item{`table`, `table_source`}{publication-style results table
+#'       and the file it came from}
+#'     \item{`summary`, `pipeline_summary`}{the pipeline-summary row}
+#'   }
+#'
+#' @seealso [hbr_regate()] to re-apply the gate with different
+#'   settings, [hbr_haplotype_blocks()] to group superior haplotypes
+#'   into blocks.
+#'
 #' @examples
-#' toy <- system.file("extdata", "test_data", package = "HaploBreedR")
+#' toy <- system.file("extdata", "hgsi_toy", "trait_YLD",
+#'                    package = "HaploBreedR")
 #' if (nzchar(toy) && dir.exists(toy)) {
-#'   res <- try(hbr_read_results(path = toy))
+#'   run <- hbr_read_results(toy)
+#'   run$trait
+#'   length(run$superior)
+#'   head(run$table)
 #' }
+#'
 #' @export
-hbr_read_results <- function(path = NULL, traits = NULL) {
-  if (!is.null(traits)) {
-    res_list <- lapply(traits, function(p) .hgsi_load_trait(basename(p), pipeline_dir = p, verbose = FALSE))
-    class(res_list) <- "hbr_run_list"
-    return(res_list)
+hbr_read_results <- function(x = NULL, trait = NULL, phenotypes = NULL,
+                             phenotype_id_col = "ID", gate_params = NULL,
+                             path = NULL, traits = NULL) {
+  
+  # ---- Legacy aliases ---------------------------------------------------
+  if (is.null(x)) {
+    if (!is.null(traits)) x <- traits
+    else if (!is.null(path)) x <- path
   }
-  if (is.null(path) || !dir.exists(path))
-    stop("Valid output directory path required", call. = FALSE)
-  res <- .hgsi_load_trait(basename(path), pipeline_dir = path, verbose = FALSE)
-  class(res) <- "hbr_run"
-  res
+  if (is.null(x))
+    stop("supply a pipeline output directory, an in-memory result, or ",
+         "the legacy `path`/`traits` argument", call. = FALSE)
+  
+  multi_chr <- is.character(x) && length(x) > 1L
+  multi_lst <- is.list(x) && is.null(x$pipeline_summary) &&
+    length(x) > 0L && !inherits(x, "hbr_run")
+  
+  if (multi_chr || multi_lst) {
+    nms <- names(x)
+    if (is.null(nms))
+      nms <- if (multi_chr) basename(x) else NULL
+    if (is.null(nms))
+      stop("a list of results must be named", call. = FALSE)
+    res <- stats::setNames(
+      lapply(seq_along(x), function(i)
+        .hbr_read_one(x[[i]], nms[i], phenotypes, phenotype_id_col,
+                      gate_params)),
+      nms)
+    class(res) <- "hbr_run_list"
+    return(res)
+  }
+  
+  .hbr_read_one(x, trait, phenotypes, phenotype_id_col, gate_params)
 }
