@@ -27,21 +27,25 @@ haplotype-based breeding decisions in rice.
 * `hbr_go_enrichment()`: GO over-representation per aspect (BP, MF, CC)
   against the tested-gene universe, with BH-FDR correction.
 
-* `hbr_regate()`: re-applies the superior-haplotype gates (alpha,
-  effect size, optional FDR, optional trait threshold) directly to a
-  stored summary table for sensitivity analysis.
+* `hbr_read_results()`: reads the output of `haplobreed_analysis()`
+  (in-memory result, per-trait output directory, or a named list of
+  either) into a classed `hbr_run` object. The returned object carries
+  the trait direction, effective gate settings, the PCs used, tested
+  and superior gene lists, functional SNPs per gene, the phenotype
+  table, the publication-style results table, and the pipeline-summary
+  row.
 
-* `hbr_read_results()`: ingests a completed per-trait output directory
-  into a classed `hbr_run` object for downstream visualisation or
-  genomic selection.
+* `hbr_regate()`: re-applies the superior-haplotype rule with new
+  thresholds. Accepts either the legacy summary-table input (a
+  data.frame, returned with the significance and superior flags
+  recomputed) or an `hbr_run` object, in which case all four gates -
+  including the permutation gate and, when stored, the trait
+  threshold - are recomputed and the genes gained or lost versus the
+  stored call are reported.
 
 * `hbr_gene_carriers()`: extracts per-individual carrier status of the
   pipeline's superior haplotype at a given gene, used to colour
   prediction-quality panels.
-
-* `hbr_add_cross_annotation()` (internal): MSU7 ↔ RAP-DB gene-ID mapping
-  from the RAP-DB release table; GO attachment via `org.Osativa.eg.db`
-  when installed.
 
 ## Genomic prediction and breeding decisions
 
@@ -66,59 +70,58 @@ haplotype-based breeding decisions in rice.
   (Sedcole 1977), and selects a diverse parent set by block coverage
   with a relatedness ceiling.
 
-* Cross ranking by usefulness, block coverage, or a balanced mix;
-  haplotype-pyramiding probabilities and DH / RIL / F2 population
-  sizing.
+* `hbr_cross_plan()`: plans any cross between named parents in a
+  decision result - not only the top-ranked ones. Reports which
+  haplotype blocks are fixed, segregating, split between the parents
+  or missing, the exact probability that a doubled-haploid (or RIL)
+  progeny carries every segregating target haplotype, the F2
+  probabilities, and the number of plants needed to recover at least
+  one carrier at a chosen confidence.
 
 * Exported modular building blocks: `hbr_build_grm()`,
   `hbr_reml_two_kernel()`, `hbr_cross_usefulness()`,
   `hbr_pyramid_probability()`, `hbr_population_size()`,
-  `hbr_cross_plan()`, `hbr_trait_conflicts()`.
+  `hbr_trait_conflicts()`.
 
 ## Haplotype blocks
 
-* `hbr_haplotype_blocks()`: standalone block calling on any set of
-  target loci. Supports the map-based rules (`"recomb"`, `"ld"`,
-  `"either"`), the SNP-level methods (`"fourgamete"`, `"gabriel"`) and
-  the two combinations (`"recomb+gabriel"`, `"recomb+fourgamete"`).
-  Gabriel is implemented with the Gabriel et al. (2002) D′ confidence
-  interval and vectorised pairwise gamete counting.
+* `hbr_haplotype_blocks()`: groups target loci into haplotype blocks.
+  Accepts the original low-level inputs (`units`, `cm_snp`, `chr_snp`)
+  and returns integer block IDs, or a pipeline run (`hbr_run`), in
+  which case the superior haplotypes are rebuilt, the discovery gate
+  replayed, and a classed `hbr_blocks` object returned with the block
+  table, per-line carrier matrix and SNP windows. Supports the
+  map-based rules (`"recomb"`, `"ld"`, `"either"`), the SNP-level
+  methods (`"fourgamete"`, `"gabriel"`) and the two combinations
+  (`"recomb+gabriel"`, `"recomb+fourgamete"`). Gabriel is implemented
+  with the Gabriel et al. (2002) D' confidence interval and vectorised
+  pairwise gamete counting.
 
 * `hbr_haplotype_block_table()`: the block summary table and the
   per-locus assignment in one call, for users who want the block table
-  without the full pipeline.
+  from a low-level locus set without a pipeline run.
 
 ## Genetic map
 
 * `hbr_rice_genetic_map()`: the Nagamura et al. (1997) rice RFLP
-  linkage-map anchors (n ≈ 1,650 markers, total 1,510 cM) as a data
-  frame with `chr`, `bp`, `cm`. Interpolated at run time onto the
+  linkage-map anchors (n approx. 1,650 markers, total 1,510 cM) as a
+  data frame with `chr`, `bp`, `cm`. Interpolated at run time onto the
   physical positions of any PLINK `.bim` with a monotone cubic Hermite
   spline.
 
-* `hbr_rice_genetic_map_summary()`: one-row summary of the bundled
-  anchors.
-
 ## Visualisation
 
-* Publication-quality figures for haplotype structure, gene models, LD
-  structure and cross design: `hbr_plot_haplotype()`,
-  `hbr_plot_gene_list()`, `hbr_plot_gene_structure()`,
-  `hbr_plot_haplotype_network()`, `hbr_plot_ld_heatmap()`,
-  `hbr_plot_superior_haplotype()`, `hbr_plot_cross_ranking()`,
-  `hbr_plot_cv_forest()`, `hbr_plot_cv_optimism()`,
-  `hbr_plot_prediction_quality()`, `hbr_plot_selected_set_coverage()`,
-  `hbr_plot_parent_profile()`, `hbr_plot_cross_landscape()`.
+* Publication-quality figures for haplotype structure, gene models and
+  cross design: `hbr_plot_haplotype()`, `hbr_plot_gene_structure()`,
+  `hbr_plot_haplotype_network()`, `hbr_plot_cross_ranking()` and
+  `hbr_plot_cv_forest()`.
 
-* S3 methods for the pipeline objects: `plot()` and `summary()` for
-  `hbr_run` and `hgsi_advanced`; `print()` and `summary()` for
-  `hgsi_fit`; `print()` for `hbr_reference`, `hbr_sequence_qc`,
-  `hbr_compat_report`, `hbr_id_report` and `hbr_genotype`.
+* Ten built-in colour palettes (`hbr_palette()`,
+  `hbr_palette_names()`) and ten ggplot2 themes (`hbr_theme()`,
+  `hbr_theme_names()`); per-gene marker colours derived from the
+  IUPAC allele set.
 
-* Ten built-in colour palettes and ten ggplot2 themes; per-gene marker
-  colours derived from the IUPAC allele set via `hbr_cell_colours()`.
-
-## Manuscript tables and exported building blocks
+## Manuscript tables
 
 * `hbr_build_manuscript_tables()`: a multi-sheet Excel workbook from a
   pipeline run, with study summary, gene results, donor tables and
@@ -129,9 +132,26 @@ haplotype-based breeding decisions in rice.
 * `hbr_crop_lookup()`: built-in crop-to-species-to-assembly lookup for
   Ensembl Plants; refreshable against the live FTP listing.
 
+* `hbr_annotate_regions_with_genes()` and `hbr_read_gff3_genes()`:
+  parse a GFF3 annotation and overlap the resulting gene table with a
+  set of genomic regions, labelling each region-gene pair with its
+  relationship (contained, overlaps left/right, contains region).
+
 * Local, MSU7, RAP-DB and Ensembl Plants reference sources; chromosome
   names standardised on every slot so they match the genotype
   convention applied by `hbr_normalize_genotype()`.
+
+## S3 methods
+
+* `print()`, `summary()` and `plot()` methods for the classed results
+  of the pipeline: `hbr_run` (single-trait discovery), `hgsi_fit`
+  (fitted genomic prediction models), `hgsi_advanced` (cross-design
+  result), `hbr_regate` (re-gated call) and `hbr_blocks` (haplotype
+  block assignment).
+
+* `print()` methods for the reference and QC objects:
+  `hbr_reference`, `hbr_sequence_qc`, `hbr_compat_report`,
+  `hbr_id_report` and `hbr_genotype`.
 
 ## Reproducibility and performance
 
