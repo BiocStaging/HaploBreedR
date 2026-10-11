@@ -18,14 +18,13 @@ haplotype-guided cross-usefulness prediction and linkage-aware
 pyramiding optimization, and selects diverse parent sets with a
 relatedness ceiling.
 
-📊 **[One-page infographic](https://aksruchi.github.io/HaploBreedR/infographic.html)** (https://aksruchi.github.io/HaploBreedR/reference/figures/HaploBreedR_infographic.png) — the pipeline at a glance.
+📊 **[One-page infographic](https://aksruchi.github.io/HaploBreedR/infographic.html)** — the pipeline at a glance.
+
 <p align="center">
   <a href="https://aksruchi.github.io/HaploBreedR/infographic.html">
     <img src="man/figures/HaploBreedR_infographic.png" width="600"
          alt="HaploBreedR pipeline infographic">
   </a>
-  <br>
-  <em>One-page infographic — the pipeline at a glance</em>
 </p>
 
 <p align="center">
