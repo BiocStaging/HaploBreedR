@@ -19,8 +19,21 @@ pyramiding optimization, and selects diverse parent sets with a
 relatedness ceiling.
 
 📊 **[One-page infographic](https://aksruchi.github.io/HaploBreedR/infographic.html)** ([print TIFF](https://aksruchi.github.io/HaploBreedR/reference/figures/HaploBreedR_infographic.tiff)) — the pipeline at a glance.
-![Example haplotype figure for LOC_Os01g24450](man/figures/LOC_Os01g24450_haplotype_figure.png)
+<p align="center">
+  <a href="https://aksruchi.github.io/HaploBreedR/infographic.html">
+    <img src="man/figures/HaploBreedR_infographic.png" width="600"
+         alt="HaploBreedR pipeline infographic">
+  </a>
+  <br>
+  <em>One-page infographic — the pipeline at a glance</em>
+</p>
 
+<p align="center">
+  <img src="man/figures/LOC_Os01g24450_haplotype_figure.png" width="600"
+       alt="Example per-gene haplotype summary figure">
+  <br>
+  <em>Example per-gene figure produced by <code>haplobreed_analysis(plot_style = "gene_list")</code></em>
+</p>
 *A four-panel summary for a single superior gene: gene model, haplotype network, haplotype table, and trait distribution. Produced automatically by `haplobreed_analysis(plot_style = "gene_list")`.*
 ---
 
